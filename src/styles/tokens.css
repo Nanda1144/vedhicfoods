@@ -1,0 +1,299 @@
+/* ==========================================================================
+   Vedhi Foods — Design Tokens
+   Single source of truth for colour, type, space, radius, elevation & motion.
+   Components must ONLY consume semantic tokens (never raw palette values),
+   so that admin-controlled theming can override the semantic layer at runtime.
+   ========================================================================== */
+
+:root {
+  /* ----------------------------------------------------------------------
+     1. PALETTE PRIMITIVES  (raw values — do not use directly in components)
+     ---------------------------------------------------------------------- */
+
+  /* Deep Forest Green */
+  --green-900: #10261a;
+  --green-800: #17341f;
+  --green-700: #1f3d2b;
+  --green-600: #2a5138;
+  --green-500: #3a6a4a;
+  --green-300: #8fae99;
+  --green-100: #dfe9e1;
+  --green-50: #eef4ef;
+
+  /* Olive Green */
+  --olive-800: #4d5a27;
+  --olive-700: #5f6f30;
+  --olive-600: #6b7b3a;
+  --olive-500: #7c8c4a;
+  --olive-300: #b3bd8b;
+  --olive-100: #e6e9d5;
+
+  /* Warm cream / natural beige */
+  --cream-50: #fdfbf6;
+  --cream-100: #faf6ec;
+  --cream-200: #f5efe0;
+  --cream-300: #efe7d4;
+  --cream-400: #e6dcc5;
+
+  /* Earth brown */
+  --brown-800: #4a3220;
+  --brown-700: #5c3f28;
+  --brown-600: #6b4a2f;
+  --brown-500: #7d5a3c;
+  --brown-300: #b89a7d;
+  --brown-100: #e9dccd;
+
+  /* Premium gold accent */
+  --gold-700: #9c7a2e;
+  --gold-600: #b28f3c;
+  --gold-500: #c9a24b;
+  --gold-400: #d8b969;
+  --gold-300: #e6cf94;
+  --gold-100: #f4e9cd;
+
+  /* Neutrals */
+  --neutral-900: #1c1f1a;
+  --neutral-800: #2a2e26;
+  --neutral-700: #3f453a;
+  --neutral-600: #5c6355;
+  --neutral-500: #7b8274;
+  --neutral-400: #a5aa9e;
+  --neutral-300: #c9ccc3;
+  --neutral-200: #e0e2db;
+  --neutral-100: #eff0ec;
+  --white: #ffffff;
+
+  /* Functional */
+  --red-700: #9b2c22;
+  --red-600: #b3372b;
+  --red-100: #f7e2df;
+  --amber-700: #8a5a12;
+  --amber-600: #b57a1c;
+  --amber-100: #f8ecd4;
+  --blue-700: #1f4f77;
+  --blue-600: #2a6a9e;
+  --blue-100: #e0edf6;
+
+  /* ----------------------------------------------------------------------
+     2. BRAND / THEME SEMANTIC LAYER  (admin-overridable at runtime)
+     ---------------------------------------------------------------------- */
+  --color-primary: var(--green-700);
+  --color-primary-hover: var(--green-800);
+  --color-primary-active: var(--green-900);
+  --color-primary-soft: var(--green-100);
+  --color-primary-contrast: var(--cream-50);
+
+  --color-secondary: var(--olive-600);
+  --color-secondary-hover: var(--olive-700);
+  --color-secondary-soft: var(--olive-100);
+
+  --color-accent: var(--gold-500);
+  --color-accent-hover: var(--gold-600);
+  --color-accent-soft: var(--gold-100);
+
+  --color-brown: var(--brown-600);
+  --color-brown-soft: var(--brown-100);
+
+  --color-background: var(--cream-100);
+  --color-background-alt: var(--cream-200);
+  --color-surface: var(--cream-50);
+  --color-surface-raised: var(--white);
+  --color-surface-inverse: var(--green-800);
+
+  --color-text: var(--neutral-800);
+  --color-text-strong: var(--neutral-900);
+  --color-text-muted: var(--neutral-600);
+  --color-text-subtle: var(--neutral-500);
+  --color-text-inverse: var(--cream-50);
+  --color-text-on-accent: var(--green-900);
+
+  --color-border: #e5ddca;
+  --color-border-strong: #d5c9b0;
+  --color-border-subtle: #efe9db;
+  --color-focus-ring: var(--gold-500);
+
+  --color-success: var(--green-600);
+  --color-success-soft: var(--green-100);
+  --color-danger: var(--red-600);
+  --color-danger-soft: var(--red-100);
+  --color-warning: var(--amber-600);
+  --color-warning-soft: var(--amber-100);
+  --color-info: var(--blue-600);
+  --color-info-soft: var(--blue-100);
+
+  --color-overlay: rgba(16, 38, 26, 0.55);
+  --color-overlay-soft: rgba(16, 38, 26, 0.28);
+
+  /* Subtle premium texture / gradient helpers */
+  --gradient-hero: radial-gradient(
+      120% 120% at 80% 0%,
+      rgba(201, 162, 75, 0.16) 0%,
+      rgba(201, 162, 75, 0) 55%
+    ),
+    radial-gradient(90% 90% at 0% 100%, rgba(107, 123, 58, 0.12) 0%, rgba(107, 123, 58, 0) 60%);
+  --gradient-surface: linear-gradient(180deg, var(--cream-50) 0%, var(--cream-100) 100%);
+  --gradient-primary: linear-gradient(135deg, var(--green-700) 0%, var(--green-600) 100%);
+  --gradient-gold: linear-gradient(135deg, var(--gold-400) 0%, var(--gold-600) 100%);
+
+  /* ----------------------------------------------------------------------
+     3. TYPOGRAPHY
+     ---------------------------------------------------------------------- */
+  --font-display: 'Cormorant Garamond', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --font-body: 'Outfit', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Consolas, monospace;
+
+  --weight-light: 300;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  --leading-tight: 1.08;
+  --leading-snug: 1.25;
+  --leading-normal: 1.55;
+  --leading-relaxed: 1.7;
+
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
+  --tracking-wider: 0.14em;
+
+  /* Fluid type scale */
+  --text-display: clamp(2.75rem, 1.6rem + 5.2vw, 5.25rem);
+  --text-h1: clamp(2.25rem, 1.4rem + 3.6vw, 3.75rem);
+  --text-h2: clamp(1.875rem, 1.3rem + 2.4vw, 2.875rem);
+  --text-h3: clamp(1.5rem, 1.2rem + 1.3vw, 2.125rem);
+  --text-h4: clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem);
+  --text-h5: clamp(1.0625rem, 1rem + 0.3vw, 1.25rem);
+  --text-body-lg: clamp(1.0625rem, 1rem + 0.3vw, 1.1875rem);
+  --text-body: 1rem;
+  --text-small: 0.875rem;
+  --text-caption: 0.75rem;
+  --text-button: 0.9375rem;
+  --text-label: 0.8125rem;
+
+  /* ----------------------------------------------------------------------
+     4. SPACING  (4px base grid)
+     ---------------------------------------------------------------------- */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-7: 1.75rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-14: 3.5rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+  --space-24: 6rem;
+  --space-32: 8rem;
+
+  /* Layout rhythm */
+  --section-y: clamp(3.5rem, 1.5rem + 6vw, 7rem);
+  --section-y-sm: clamp(2.5rem, 1.5rem + 3vw, 4rem);
+  --gutter: clamp(1rem, 0.4rem + 2.6vw, 2rem);
+  --container-max: 1240px;
+  --container-narrow: 820px;
+  --container-wide: 1440px;
+
+  --card-padding: clamp(1rem, 0.6rem + 1vw, 1.5rem);
+  --grid-gap: clamp(1rem, 0.6rem + 1.2vw, 1.75rem);
+
+  /* ----------------------------------------------------------------------
+     5. RADII
+     ---------------------------------------------------------------------- */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-2xl: 40px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
+
+  /* ----------------------------------------------------------------------
+     6. ELEVATION  (warm, low-contrast shadows — never harsh black)
+     ---------------------------------------------------------------------- */
+  --shadow-xs: 0 1px 2px rgba(74, 50, 32, 0.06);
+  --shadow-sm: 0 2px 6px rgba(74, 50, 32, 0.07);
+  --shadow-md: 0 8px 22px -8px rgba(74, 50, 32, 0.16), 0 2px 6px rgba(74, 50, 32, 0.05);
+  --shadow-lg: 0 20px 44px -16px rgba(41, 51, 34, 0.24), 0 6px 14px rgba(74, 50, 32, 0.07);
+  --shadow-xl: 0 36px 72px -28px rgba(41, 51, 34, 0.32), 0 10px 20px rgba(74, 50, 32, 0.08);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  --ring: 0 0 0 3px rgba(201, 162, 75, 0.35);
+
+  /* ----------------------------------------------------------------------
+     7. BORDERS
+     ---------------------------------------------------------------------- */
+  --border-width: 1px;
+  --border-width-strong: 2px;
+  --border-subtle: var(--border-width) solid var(--color-border);
+  --border-default: var(--border-width) solid var(--color-border-strong);
+
+  /* ----------------------------------------------------------------------
+     8. MOTION
+     ---------------------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.5, 1);
+  --duration-instant: 100ms;
+  --duration-fast: 160ms;
+  --duration-base: 240ms;
+  --duration-slow: 380ms;
+  --duration-slower: 560ms;
+  --transition-base: var(--duration-base) var(--ease-out);
+  --transition-fast: var(--duration-fast) var(--ease-out);
+  --transition-slow: var(--duration-slow) var(--ease-out);
+
+  /* ----------------------------------------------------------------------
+     9. Z-INDEX
+     ---------------------------------------------------------------------- */
+  --z-base: 1;
+  --z-raised: 10;
+  --z-sticky: 100;
+  --z-header: 200;
+  --z-overlay: 300;
+  --z-drawer: 400;
+  --z-modal: 500;
+  --z-toast: 600;
+  --z-tooltip: 700;
+}
+
+/* --------------------------------------------------------------------------
+   THEME PRESETS — prepared for admin-controlled branding.
+   Applied by setting data-theme on <html>. Components stay untouched.
+   -------------------------------------------------------------------------- */
+[data-theme='olive'] {
+  --color-primary: var(--olive-700);
+  --color-primary-hover: var(--olive-800);
+  --color-primary-soft: var(--olive-100);
+}
+
+[data-theme='harvest'] {
+  --color-primary: var(--brown-700);
+  --color-primary-hover: var(--brown-800);
+  --color-primary-soft: var(--brown-100);
+  --color-secondary: var(--gold-600);
+  --color-secondary-hover: var(--gold-700);
+  --color-secondary-soft: var(--gold-100);
+}
+
+[data-theme='midnight'] {
+  --color-background: #0f1d14;
+  --color-background-alt: #12241a;
+  --color-surface: #15291d;
+  --color-surface-raised: #1a3123;
+  --color-surface-inverse: var(--cream-100);
+  --color-text: #e9efe6;
+  --color-text-strong: #ffffff;
+  --color-text-muted: #a9baa7;
+  --color-text-subtle: #8a9c88;
+  --color-border: #24382a;
+  --color-border-strong: #2f4636;
+  --color-border-subtle: #1d3024;
+  --gradient-surface: linear-gradient(180deg, #14281c 0%, #102118 100%);
+}

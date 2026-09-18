@@ -1,0 +1,238 @@
+/* ==========================================================================
+   Utility layer — layout primitives & helpers.
+   Curated, not exhaustive: anything used in 3+ places belongs here.
+   ========================================================================== */
+
+/* --- Containers ----------------------------------------------------------- */
+
+.container {
+  width: 100%;
+  max-width: var(--container-max);
+  margin-inline: auto;
+  padding-inline: var(--gutter);
+}
+
+.container--narrow {
+  max-width: var(--container-narrow);
+}
+
+.container--wide {
+  max-width: var(--container-wide);
+}
+
+.container--flush {
+  padding-inline: 0;
+}
+
+/* --- Section rhythm ------------------------------------------------------- */
+
+.section {
+  padding-block: var(--section-y);
+}
+
+.section--sm {
+  padding-block: var(--section-y-sm);
+}
+
+.section--tight-top {
+  padding-top: var(--space-8);
+}
+
+.section--flush-bottom {
+  padding-bottom: 0;
+}
+
+.section--alt {
+  background: var(--color-background-alt);
+}
+
+.section--surface {
+  background: var(--color-surface);
+}
+
+.section--primary {
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+}
+
+.section--gradient {
+  background: var(--gradient-surface);
+}
+
+/* --- Stacks & clusters ---------------------------------------------------- */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+}
+.stack-1 { gap: var(--space-1); }
+.stack-2 { gap: var(--space-2); }
+.stack-3 { gap: var(--space-3); }
+.stack-4 { gap: var(--space-4); }
+.stack-5 { gap: var(--space-5); }
+.stack-6 { gap: var(--space-6); }
+.stack-8 { gap: var(--space-8); }
+.stack-10 { gap: var(--space-10); }
+.stack-12 { gap: var(--space-12); }
+
+.cluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.cluster-1 { gap: var(--space-1); }
+.cluster-2 { gap: var(--space-2); }
+.cluster-3 { gap: var(--space-3); }
+.cluster-4 { gap: var(--space-4); }
+.cluster-6 { gap: var(--space-6); }
+.cluster-8 { gap: var(--space-8); }
+
+.row {
+  display: flex;
+  align-items: center;
+}
+.row--between {
+  justify-content: space-between;
+}
+.row--center {
+  justify-content: center;
+}
+.row--end {
+  justify-content: flex-end;
+}
+
+.grid {
+  display: grid;
+  gap: var(--grid-gap);
+}
+
+.grid--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.grid--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+.grid--auto-fit {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+}
+
+.grid--auto-fill {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+}
+
+.grid--sidebar {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2.2fr);
+}
+
+@media (max-width: 900px) {
+  .grid--sidebar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .grid--2,
+  .grid--3,
+  .grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .grid--3,
+  .grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+}
+
+/* --- Spacing helpers (used sparingly) ------------------------------------- */
+
+.mt-2 { margin-top: var(--space-2); }
+.mt-4 { margin-top: var(--space-4); }
+.mt-6 { margin-top: var(--space-6); }
+.mt-8 { margin-top: var(--space-8); }
+.mt-10 { margin-top: var(--space-10); }
+.mt-12 { margin-top: var(--space-12); }
+
+.mb-2 { margin-bottom: var(--space-2); }
+.mb-4 { margin-bottom: var(--space-4); }
+.mb-6 { margin-bottom: var(--space-6); }
+.mb-8 { margin-bottom: var(--space-8); }
+
+.mx-auto { margin-inline: auto; }
+
+/* --- Type helpers --------------------------------------------------------- */
+
+.text-center { text-align: center; }
+.text-right { text-align: right; }
+.text-muted { color: var(--color-text-muted); }
+.text-subtle { color: var(--color-text-subtle); }
+.text-strong { color: var(--color-text-strong); }
+.text-primary { color: var(--color-primary); }
+.text-accent { color: var(--color-accent); }
+.text-inverse { color: var(--color-text-inverse); }
+
+.measure { max-width: 62ch; }
+.measure-sm { max-width: 46ch; }
+.measure-xs { max-width: 34ch; }
+
+.uppercase { text-transform: uppercase; letter-spacing: var(--tracking-wide); }
+
+/* --- Visibility ----------------------------------------------------------- */
+
+.hidden { display: none !important; }
+
+.block { display: block; }
+.inline-flex { display: inline-flex; align-items: center; gap: var(--space-2); }
+
+.full-width { width: 100%; }
+
+@media (max-width: 767px) {
+  .hide-mobile { display: none !important; }
+}
+
+@media (min-width: 768px) {
+  .hide-desktop { display: none !important; }
+}
+
+/* --- Misc ----------------------------------------------------------------- */
+
+.divider {
+  height: 1px;
+  background: var(--color-border);
+  width: 100%;
+}
+
+.divider--vertical {
+  width: 1px;
+  height: 100%;
+  background: var(--color-border);
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.surface-card {
+  background: var(--color-surface-raised);
+  border: var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}

@@ -5,7 +5,7 @@ import { useAdminAuth } from '@/context/AdminAuthContext'
 import { useAsync } from '@/hooks'
 import { useToast } from '@/context'
 import { formatCurrency } from '@/utils/format'
-import { AdminPageHeader, DataTable, StatusPill, ConfirmDialog, AdminToolbar, PaginationBar } from '@/components/admin'
+import { AdminPageHeader, DataTable, StatusPill, ConfirmDialog, AdminToolbar, PaginationBar, ImageUploadField } from '@/components/admin'
 import type { Column } from '@/components/admin'
 import type { Product } from '@/types'
 import { CATEGORIES } from '@/data/categories'
@@ -196,9 +196,12 @@ export function AdminProductsPage() {
           <ul className="categories-list">
             {categoriesColumn.byCategory.map(({ category, count }) => (
               <li key={category.slug} className="admin-product-cell" style={{ justifyContent: 'space-between' }}>
-                <span>
-                  <strong>{category.name}</strong>
-                  <span className="type-caption">{category.slug}</span>
+                <span className="admin-product-cell">
+                  <img src={category.image} alt="" className="admin-product-cell__thumb" loading="lazy" />
+                  <span>
+                    <strong>{category.name}</strong>
+                    <span className="type-caption clamp-2">{category.description}</span>
+                  </span>
                 </span>
                 <Badge tone="neutral">{count} products</Badge>
               </li>
@@ -481,9 +484,11 @@ function ProductModal({ product, onClose, onSaved }: { product: Product | null; 
         </div>
 
         <div className="admin-form__grid">
-          <Field label="Primary image URL">
-            <Input value={form.image} onChange={(event) => patch('image', event.target.value)} placeholder="https://…" />
-          </Field>
+          <ImageUploadField
+            value={form.image}
+            onChange={(value) => patch('image', value)}
+            hint="Upload a PNG, JPG or WebP file from your computer."
+          />
           <Field label="Tags" hint="Comma separated">
             <Input value={form.tags} onChange={(event) => patch('tags', event.target.value)} placeholder="gluten-free, energy" />
           </Field>

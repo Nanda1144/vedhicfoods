@@ -1,4 +1,6 @@
-import { Link, useMemo } from 'react'
+import { useMemo } from 'react'
+import { Link } from 'react-router-dom'
+import { CATEGORY_BY_SLUG } from '@/data/categories'
 import { adminService } from '@/services/adminService'
 import { useAsync } from '@/hooks'
 import { formatCurrency, formatNumber } from '@/utils/format'
@@ -40,14 +42,17 @@ export function AdminDashboardPage() {
   const { categoryPerformance, lowStockCount } = useMemo(() => {
     const products = adminService.snapshot().products
     const byCategory = new Map<string, { count: number; stock: number; value: number }>()
-    for (const product of products) {
-      const entry = byCategory.get(product.category) ?? { count: 0, stock: 0, value: 0 }
+for (const product of products) {
+      const entry = byCategory.get(product.categorySlug) ?? { count: 0, stock: 0, value: 0 }
       entry.count += 1
       entry.stock += product.stock
       entry.value += product.price * product.stock
-      byCategory.set(product.category, entry)
+      byCategory.set(product.categorySlug, entry)
     }
-    const entries = [...byCategory.entries()].map(([name, data]) => ({ name, ...data }))
+    const entries = [...byCategory.entries()].map(([slug, data]) => ({
+      name: CATEGORY_BY_SLUG[slug]?.name ?? slug.replaceAll('-', ' '),
+      ...data,
+    }))
     const maxValue = Math.max(...entries.map((entry) => entry.value), 1)
     return {
       categoryPerformance: entries
@@ -182,7 +187,7 @@ export function AdminDashboardPage() {
                   delivered
                 </span>
               </div>
-              <ul className="donut__legend">
+<ul className="donut__legend">
                 {breakdown.map((item) => (
                   <li key={item.label}>
                     <span className={`donut__dot is-${item.tone === 'success' ? 'green' : item.tone}`} />
@@ -191,6 +196,7 @@ export function AdminDashboardPage() {
                   </li>
                 ))}
               </ul>
+              <p className="donut__statuses">{breakdown.map((item) => item.label).join(' · ')}</p>
             </div>
           </article>
 
@@ -351,7 +357,7 @@ export function AdminDashboardPage() {
 
 function SupportInboxPreview() {
   const { data } = useAsync(() => adminService.tickets(), [])
-  const open = (data ?? []).filter((ticket) => ticket.status !== 'resolved' && ticket.status !== 'archived').slice(0, 4)
+  const open = (data ?? []).filter((ticket) => ticket.status !== 'resolved' && ticket.status !== 'closed').slice(0, 4)
   return (
     <ul className="inbox-list">
       {data === undefined && Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} style={{ width: '100%', height: 44 }} />)}

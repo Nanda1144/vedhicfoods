@@ -233,6 +233,16 @@
   }
 }
 
+@media (max-width: 767px) {
+  .admin__menu-btn {
+    display: none;
+  }
+
+  .admin__content {
+    padding-bottom: calc(68px + env(safe-area-inset-bottom));
+  }
+}
+
 /* --- Admin login ---------------------------------------------------------- */
 
 .admin-login {
@@ -372,6 +382,32 @@
   justify-content: space-between;
   gap: var(--space-5);
   flex-wrap: wrap;
+  --admin-header-gutter: var(--space-6);
+  position: sticky;
+  top: calc(var(--space-3) + var(--space-3) + 40px + var(--admin-header-gutter));
+  z-index: var(--z-sticky);
+  margin-inline: calc(var(--admin-header-gutter) * -1);
+  margin-top: calc(var(--admin-header-gutter) * -1);
+  margin-bottom: calc(var(--space-2) * -1);
+  padding-inline: var(--admin-header-gutter);
+  padding-top: var(--admin-header-gutter);
+  padding-bottom: var(--space-2);
+  background: var(--color-surface);
+  border-bottom: var(--border-subtle);
+}
+
+@media (max-width: 640px) {
+  .admin-page-header {
+    --admin-header-gutter: var(--space-4);
+    position: sticky;
+    top: calc(var(--space-3) + var(--space-3) + 40px + var(--space-4));
+  }
+}
+
+.admin-page-header__back {
+  margin-bottom: var(--space-1);
+  background: var(--color-background-alt);
+  color: var(--color-text);
 }
 
 .admin-page-header__copy h1 {
@@ -391,6 +427,18 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
+}
+
+/* Admin headings are always left-aligned (boss requirement) */
+
+.admin-page-header__copy,
+.admin-page-header__copy h1,
+.admin-card__head h2,
+.admin-form__section-title,
+.admin-form__section-subtitle,
+.admin-forbidden h1,
+.promo-card h3 {
+  text-align: left;
 }
 
 /* --- Cards & grid --------------------------------------------------------- */
@@ -517,7 +565,7 @@
 
 .stat-card__value {
   margin-top: var(--space-2);
-  font-family: var(--font-display);
+  font-family: 'Times New Roman', Times, serif;
   font-size: var(--text-h1);
   font-weight: var(--weight-semibold);
   line-height: 1;
@@ -640,6 +688,77 @@
   color: var(--color-text-strong);
 }
 
+/* --- Top customers by lifetime spend --------------------------------------- */
+
+.admin-customer-table {
+  min-width: 0;
+}
+
+.admin-customer-table__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--space-4);
+  align-items: center;
+  padding-bottom: var(--space-2);
+  border-bottom: var(--border-subtle);
+  color: var(--color-text-subtle);
+  font-size: var(--text-caption);
+}
+
+.admin-customer-table__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-customer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: var(--space-4);
+  align-items: center;
+}
+
+.admin-customer-row__name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-weight: var(--weight-normal);
+}
+
+.admin-customer-row__rank {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-circle);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-bold);
+}
+
+.admin-customer-row__email {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-subtle);
+}
+
+.admin-customer-row__spend {
+  font-weight: var(--weight-normal);
+}
+
+.admin-invoice-downloaded {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* --- Data table ----------------------------------------------------------- */
 
 .data-table {
@@ -750,6 +869,14 @@
   font-weight: var(--weight-semibold);
 }
 
+.inventory-alert__copy {
+  min-width: 0;
+}
+
+.inventory-alert__details {
+  color: var(--color-text-muted);
+}
+
 /* --- Filter chips & notes ------------------------------------------------- */
 
 .filter-chips {
@@ -842,7 +969,7 @@
 }
 
 /* ==========================================================================
-   Admin toolkit — toolbar, pagination, alerts, charts, forms, detail
+   Admin toolkit ï¿½ toolbar, pagination, alerts, charts, forms, detail
    ========================================================================== */
 
 /* --- Shared helpers ------------------------------------------------------- */
@@ -1137,8 +1264,18 @@
 
 .donut-wrap {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-5);
+}
+
+.donut__statuses {
+  flex: 1 1 100%;
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-caption);
+  letter-spacing: var(--tracking-wide);
+  color: var(--color-text-subtle);
+  text-align: center;
 }
 
 .donut {
@@ -1521,6 +1658,12 @@
   gap: var(--space-4);
 }
 
+.admin-form select,
+.admin-form select option,
+.admin-toolbar__filter select option {
+  font-weight: var(--weight-semibold);
+}
+
 .admin-form__grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1545,6 +1688,69 @@
   text-transform: uppercase;
   color: var(--color-text-muted);
   margin: 0;
+}
+
+.admin-form__section-subtitle {
+  font-size: var(--text-small);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text-strong);
+  margin: 0 0 var(--space-2);
+}
+
+.media-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.media-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border: var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.media-row__thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-background-alt);
+  display: grid;
+  place-items: center;
+  color: var(--color-text-muted);
+}
+
+.media-row__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.media-row__copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.media-row__copy strong {
+  font-size: var(--text-small);
+  color: var(--color-text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-row__copy small {
+  font-size: var(--text-caption);
+  color: var(--color-text-subtle);
 }
 
 .admin-form__foot {
@@ -1588,7 +1794,7 @@
 }
 
 /* ==========================================================================
-   Admin pages — promotions, categories, staff, support, orders, branding
+   Admin pages ï¿½ promotions, categories, staff, support, orders, branding
    ========================================================================== */
 
 /* --- Promotions ------------------------------------------------------------ */
@@ -1671,6 +1877,16 @@
 
 .categories-list > li {
   min-width: 0;
+}
+
+.categories-list .admin-product-cell > span {
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .categories-list > li.admin-product-cell {
+    flex-wrap: wrap;
+  }
 }
 
 /* --- Discount code chip ------------------------------------------------------ */
@@ -1828,6 +2044,18 @@
 .perm-matrix td.is-granted svg,
 .perm-matrix td:first-of-type.is-granted svg {
   color: var(--color-success);
+}
+
+.perm-check {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary, var(--color-accent));
+  cursor: pointer;
+}
+
+.perm-check:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
 }
 
 .precise-list {

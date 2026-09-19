@@ -117,19 +117,26 @@ export function AdminCustomersPage() {
           <h2>Top customers by lifetime spend</h2>
           <span className="admin-card__hint">value segment</span>
         </header>
-        <ul className="top-products">
-          {highValue.map((customer, index) => (
-            <li key={customer.id}>
-              <span className="top-products__rank">{index + 1}</span>
-              <span className="admin-avatar-sm">{initials(customer.name, 2)}</span>
-              <span className="top-products__name">
-                <strong>{customer.name}</strong>
-                <span className="type-caption">{customer.orderCount} orders</span>
-              </span>
-              <strong>{formatCurrency(customer.totalSpent)}</strong>
-            </li>
-          ))}
-        </ul>
+        <div className="admin-customer-table">
+          <div className="admin-customer-table__head">
+            <span>Customer</span>
+            <span>Email</span>
+            <span>Lifetime spend</span>
+          </div>
+          <ul className="admin-customer-table__rows">
+            {highValue.map((customer, index) => (
+              <li key={customer.id} className="admin-customer-row">
+                <span className="admin-customer-row__name">
+                  <span className="admin-customer-row__rank">{index + 1}</span>
+                  <span className="admin-avatar-sm">{initials(customer.name, 2)}</span>
+                  {customer.name}
+                </span>
+                <span className="admin-customer-row__email">{customer.email}</span>
+                <span className="admin-customer-row__spend">{formatCurrency(customer.totalSpent)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       </section>
     </>
   )

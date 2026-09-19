@@ -13,6 +13,7 @@ import {
   Reveal,
   Badge,
   ProductGridSkeleton,
+  FaqSection,
 } from '@/components/common'
 import { ProductGrid, CategoryCard } from '@/components/product'
 import { Testimonials } from '@/components/home/Testimonials'
@@ -277,6 +278,16 @@ export function HomePage() {
               Read more of our story
             </ButtonLink>
           </div>
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="container">
+          <FaqSection
+            eyebrow="Questions, answered"
+            title="Before you ask"
+            description="Straight answers about shipping, orders, returns and what goes into every pack."
+          />
         </div>
       </section>
 

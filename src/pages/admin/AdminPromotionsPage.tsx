@@ -210,8 +210,8 @@ function PromotionModal({
         title: form.title,
         subtitle: form.subtitle,
         placement: form.placement,
-        ctaLabel: form.ctaLabel,
-        ctaHref: form.ctaHref,
+        ctaLabel: form.ctaLabel.trim(),
+        ctaHref: form.ctaHref.trim() || '/shop',
         active: form.active,
         startsAt: promotion?.startsAt ?? new Date().toISOString(),
         expiresAt: promotion?.expiresAt ?? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
@@ -294,7 +294,7 @@ function PromotionModal({
           <Field label="Button label">
             <Input value={form.ctaLabel} onChange={(event) => patch('ctaLabel', event.target.value)} placeholder="Shop now" />
           </Field>
-          <Field label="Button link">
+          <Field label="Button link" hint="Where this button takes shoppers — the page it opens when clicked. Optional: leave blank to link to the /shop page.">
             <Input value={form.ctaHref} onChange={(event) => patch('ctaHref', event.target.value)} placeholder="/shop" />
           </Field>
         </div>

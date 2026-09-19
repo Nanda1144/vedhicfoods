@@ -3,7 +3,7 @@ import { contactService, contentService } from '@/services/contentService'
 import { useAsync } from '@/hooks'
 import { useToast, useSettings } from '@/context'
 import { isEmail, isPhoneIN, required, validate } from '@/utils/validators'
-import { PageHeader, Input, Textarea, Select, Button, Icon } from '@/components/common'
+import { PageHeader, Input, Textarea, Select, Button, Icon, FaqSection } from '@/components/common'
 
 interface ContactForm {
   name: string
@@ -136,6 +136,17 @@ export function ContactPage() {
               </Button>
             </form>
           </div>
+        </div>
+      </section>
+
+      <section className="section section--alt">
+        <div className="container">
+          <FaqSection
+            eyebrow="Before you reach out"
+            title="Quick answers, first"
+            description="Shipping, returns and payment queries are often answered in minutes — right here."
+            align="center"
+          />
         </div>
       </section>
     </>

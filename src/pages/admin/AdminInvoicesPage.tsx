@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { adminService } from '@/services/adminService'
 import { useAsync } from '@/hooks'
 import { useToast } from '@/context'
@@ -7,14 +7,23 @@ import { formatCurrency, formatDate } from '@/utils/format'
 import { AdminPageHeader, DataTable, StatusPill, AdminToolbar, PaginationBar } from '@/components/admin'
 import type { Column } from '@/components/admin'
 import type { Invoice } from '@/types'
-import { Badge, Button, Skeleton } from '@/components/common'
+import { Badge, Button, Icon, Skeleton } from '@/components/common'
 
 const PAGE_SIZE = 10
 
 export function AdminInvoicesPage() {
   const { push } = useToast()
+  const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
+  const [downloadedIds, setDownloadedIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('vedhi:downloaded-invoices')
+      return new Set(raw ? (JSON.parse(raw) as string[]) : [])
+    } catch {
+      return new Set()
+    }
+  })
   const [page, setPage] = useState(1)
 
   const { data, loading, error } = useAsync(() => adminService.invoices(), [])
@@ -38,6 +47,25 @@ export function AdminInvoicesPage() {
       paid: issued.filter((invoice) => invoice.status === 'paid').reduce((sum, invoice) => sum + invoice.total, 0),
     }
   }, [data])
+
+  const handleDownload = (invoice: Invoice) => {
+    if (downloadedIds.has(invoice.id)) {
+      push({ title: 'Already downloaded', description: `${invoice.invoiceNumber} has already been downloaded.` })
+      return
+    }
+    setDownloadedIds((prev) => {
+      const next = new Set(prev)
+      next.add(invoice.id)
+      try {
+        localStorage.setItem('vedhi:downloaded-invoices', JSON.stringify([...next]))
+      } catch {
+        // ignore storage errors in this prototype
+      }
+      return next
+    })
+    push({ title: 'Opening invoice', description: `Opening ${invoice.invoiceNumber} for download.` })
+    navigate(`/invoice/${invoice.id}`)
+  }
 
   const columns: Array<Column<Invoice>> = [
     {
@@ -71,20 +99,29 @@ export function AdminInvoicesPage() {
       key: 'actions',
       header: '',
       align: 'right',
-      render: (invoice) => (
-        <span className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
-          <Link to={`/invoice/${invoice.id}`} target="_blank" className="button button--sm button--ghost">
-            <span>View</span>
-          </Link>
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="download"
-            aria-label={`Download ${invoice.invoiceNumber}`}
-            onClick={() => push({ title: 'Invoice queued', description: `PDF for ${invoice.invoiceNumber} is being generated.` })}
-          />
-        </span>
-      ),
+      render: (invoice) => {
+        const isDownloaded = downloadedIds.has(invoice.id)
+        return (
+          <span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
+            <Link to={`/invoice/${invoice.id}`} target="_blank" className="button button--sm button--ghost">
+              <span>View</span>
+            </Link>
+            {isDownloaded ? (
+              <Badge tone="success" className="admin-invoice-downloaded">
+                <Icon name="check" size={14} /> Downloaded
+              </Badge>
+            ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="download"
+                aria-label={`Download ${invoice.invoiceNumber}`}
+                onClick={() => handleDownload(invoice)}
+              />
+            )}
+          </span>
+        )
+      },
     },
   ]
 

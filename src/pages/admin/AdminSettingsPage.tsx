@@ -1,20 +1,78 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { adminService } from '@/services/adminService'
 import { useAdminAuth } from '@/context/AdminAuthContext'
 import { useAdminSettings } from './useAdminSettings'
+import { useAsync } from '@/hooks'
 import { useToast } from '@/context'
-import { AdminPageHeader, ConfirmDialog } from '@/components/admin'
-import type { WebsiteSettings } from '@/types'
-import { Button, Skeleton } from '@/components/common'
+import { AdminPageHeader, ConfirmDialog, ImageUploadField } from '@/components/admin'
+import type { Product, WebsiteSettings } from '@/types'
+import { Button, Icon, Skeleton } from '@/components/common'
 import { Field, Input, Switch, Textarea } from '@/components/common/form'
 
 export function AdminSettingsPage() {
   const { settings, loading, persist } = useAdminSettings()
-  const { session, can } = useAdminAuth()
+  const { can } = useAdminAuth()
   const { push } = useToast()
   const [form, setForm] = useState<WebsiteSettings | null>(settings)
   const [saving, setSaving] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
+
+  const brandQuery = useAsync(() => adminService.brand(), [])
+  const productsQuery = useAsync(() => adminService.products(), [])
+  const brand = brandQuery.data ?? null
+
+  const readImageFile = (file: File | undefined): Promise<string> =>
+    new Promise((resolve, reject) => {
+      if (!file) {
+        resolve('')
+        return
+      }
+      if (file.size > 1_500_000) {
+        reject(new Error('Keep the image under 1.5 MB.'))
+        return
+      }
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result ?? ''))
+      reader.onerror = () => reject(new Error('Could not read the file.'))
+      reader.readAsDataURL(file)
+    })
+
+  const applyImage = async (kind: 'logo' | 'product', id: string | null, value: string) => {
+    try {
+      if (kind === 'logo') {
+        await adminService.saveBrand({ logoUrl: value })
+        push({ title: 'Logo updated', description: 'The new logo is saved for header, footer and invoices.' })
+        await brandQuery.run()
+      } else if (id) {
+        const product = productsQuery.data?.find((candidate) => candidate.id === id)
+        if (!product) return
+        const images = product.images.slice()
+        images[0] = value
+        await adminService.updateProduct(id, { images })
+        push({ title: 'Image replaced', description: `${product.name} now uses the new image.` })
+        await productsQuery.run()
+      }
+    } catch (caught) {
+      push({
+        title: 'Could not replace image',
+        description: caught instanceof Error ? caught.message : 'Please try again.',
+        tone: 'danger',
+      })
+    }
+  }
+
+  const onProductFile = async (productId: string, file: File | undefined) => {
+    try {
+      const value = await readImageFile(file)
+      if (value) await applyImage('product', productId, value)
+    } catch (caught) {
+      push({
+        title: 'Could not replace image',
+        description: caught instanceof Error ? caught.message : 'Please try again.',
+        tone: 'danger',
+      })
+    }
+  }
 
   const visible = form ?? settings
 
@@ -137,6 +195,46 @@ export function AdminSettingsPage() {
         </div>
       </form>
 
+      {(can('settings:write') || can('logo:write') || can('products:write')) && (
+        <section className="admin-card admin-form__section" id="media-images" style={{ scrollMarginTop: 24 }}>
+          <p className="admin-form__section-title">Media / site images</p>
+          <p className="admin-muted" style={{ margin: '0 0 var(--space-4)' }}>
+            Replace any image used across the site. Changes save immediately.
+          </p>
+
+          <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
+            <div>
+              <p className="admin-form__section-subtitle">Site logo</p>
+              {can('logo:write') && (
+                <ImageUploadField
+                  label="Logo"
+                  hint="Shown in the header, footer and on invoices."
+                  value={brand?.logoUrl ?? ''}
+                  onChange={(value) => void applyImage('logo', null, value)}
+                />
+              )}
+            </div>
+
+            <div>
+              <p className="admin-form__section-subtitle">
+                Product images {productsQuery.data?.length ? `(${productsQuery.data.length})` : ''}
+              </p>
+              {productsQuery.loading && !productsQuery.data ? (
+                <Skeleton style={{ width: '100%', height: 160, borderRadius: 12 }} />
+              ) : productsQuery.data?.length ? (
+                <ul className="media-list">
+                  {(productsQuery.data ?? []).map((product) => (
+                    <ProductMediaRow key={product.id} product={product} onFile={(file) => void onProductFile(product.id, file)} />
+                  ))}
+                </ul>
+              ) : (
+                <p className="admin-muted">No products found.</p>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+
       <ConfirmDialog
         open={resetOpen}
         title="Reset demo data?"
@@ -157,5 +255,39 @@ export function AdminSettingsPage() {
         onClose={() => setResetOpen(false)}
       />
     </>
+  )
+}
+
+function ProductMediaRow({ product, onFile }: { product: Product; onFile: (file: File | undefined) => void }) {
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  return (
+    <li className="media-row">
+      <span className="media-row__thumb">
+        {product.images[0] ? (
+          <img src={product.images[0]} alt="" />
+        ) : (
+          <Icon name="box" size={16} />
+        )}
+      </span>
+      <span className="media-row__copy">
+        <strong>{product.name}</strong>
+        <small>Product card · shop grid · product page gallery</small>
+      </span>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(event) => onFile(event.target.files?.[0])}
+      />
+      <Button
+        size="sm"
+        variant="outline"
+        icon="upload"
+        onClick={() => inputRef.current?.click()}
+      >
+        Replace
+      </Button>
+    </li>
   )
 }

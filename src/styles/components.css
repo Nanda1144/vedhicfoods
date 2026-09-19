@@ -505,6 +505,13 @@
   font-weight: var(--weight-semibold);
 }
 
+.input__suffix {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .input--textarea {
   align-items: stretch;
   padding: var(--space-3) var(--space-4);
@@ -1200,6 +1207,13 @@
 .page-header {
   padding-top: clamp(2rem, 1rem + 4vw, 3.5rem);
   padding-bottom: clamp(1.5rem, 1rem + 2vw, 2.5rem);
+}
+
+.page-header__back {
+  margin-bottom: var(--space-5);
+  margin-left: calc(var(--space-1) * -1);
+  background: var(--color-background-alt);
+  color: var(--color-text);
 }
 
 .page-header__crumbs {

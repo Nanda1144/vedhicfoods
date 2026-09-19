@@ -583,6 +583,107 @@
   margin-bottom: var(--space-3);
 }
 
+/* --- Bottom navigation (mobile) ------------------------------------------- */
+
+.bottom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-header);
+  display: none;
+  padding-bottom: env(safe-area-inset-bottom);
+  border-top: var(--border-subtle);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.bottom-nav__list {
+  display: flex;
+  align-items: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bottom-nav__list > li {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.bottom-nav__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  padding: 0.5rem 0.25rem calc(0.55rem + env(safe-area-inset-bottom));
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.bottom-nav__item:hover {
+  color: var(--color-text-strong);
+}
+
+.bottom-nav__item.is-active {
+  color: var(--color-primary);
+}
+
+.bottom-nav__icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 28px;
+}
+
+.bottom-nav__badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  font-size: 0.625rem;
+  font-weight: var(--weight-bold);
+  line-height: 16px;
+  text-align: center;
+}
+
+@media (min-width: 768px) {
+  .bottom-nav {
+    display: none !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .bottom-nav {
+    display: block;
+  }
+
+  /* One nav control per breakpoint: the bottom bar replaces the header
+     hamburger on phones; the existing mobile drawer is opened from the bar. */
+  .navbar__menu-btn {
+    display: none;
+  }
+
+  .site {
+    padding-bottom: calc(66px + env(safe-area-inset-bottom));
+  }
+}
+
 /* --- Footer --------------------------------------------------------------- */
 
 .footer {
@@ -780,6 +881,16 @@
   position: relative;
   overflow: hidden;
   background: var(--gradient-hero), var(--color-background-alt);
+}
+
+.hero__back {
+  position: absolute;
+  top: var(--space-4);
+  left: var(--gutter);
+  z-index: var(--z-raised);
+  background: color-mix(in srgb, var(--color-surface-raised) 82%, transparent);
+  color: var(--color-text);
+  backdrop-filter: blur(4px);
 }
 
 .hero__inner {
@@ -986,6 +1097,49 @@
 @media (max-width: 900px) {
   .hero__inner {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero__inner {
+    gap: var(--space-6);
+    padding-block: 2rem 3.25rem;
+    justify-items: center;
+  }
+
+  .hero__copy {
+    align-items: center;
+    text-align: center;
+  }
+
+  .hero__actions,
+  .hero__perks {
+    justify-content: center;
+  }
+
+  .hero__media {
+    width: 100%;
+    margin-top: var(--space-2);
+  }
+
+  .hero__plate {
+    width: min(300px, 72vw);
+  }
+
+  .hero__plate-glow {
+    inset: 14%;
+  }
+
+  .hero__bg-sphere--gold {
+    width: 30vmin;
+    top: -6vmin;
+    left: -10vmin;
+  }
+
+  .hero__bg-sphere--olive {
+    width: 38vmin;
+    right: -14vmin;
+    bottom: -8vmin;
   }
 }
 

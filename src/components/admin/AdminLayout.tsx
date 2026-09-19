@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate, useLocation, Navigate } from 'react-route
 import { cn } from '@/utils/cn'
 import { ADMIN_NAV } from '@/data/adminNavigation'
 import { Logo, Icon, IconButton, Badge } from '../common'
+import type { IconName } from '../common'
 import { useSettings } from '@/context'
 import { initials } from '@/utils/format'
 import { AdminAuthProvider, useAdminAuth } from '@/context/AdminAuthContext'
@@ -29,6 +30,14 @@ function NavSection({ section, onNavigate }: { section: (typeof ADMIN_NAV)[numbe
     </div>
   )
 }
+
+const BOTTOM_LINKS: { href: string; icon: IconName; label: string; end?: boolean }[] = [
+  { href: '/admin', icon: 'home', label: 'Home', end: true },
+  { href: '/admin/products', icon: 'box', label: 'Products' },
+  { href: '/admin/orders', icon: 'cart', label: 'Orders' },
+  { href: '/admin/discounts', icon: 'tag', label: 'Deals' },
+  { href: '/admin/settings', icon: 'sliders', label: 'Settings' },
+]
 
 function AdminShell() {
   const navigate = useNavigate()
@@ -57,6 +66,10 @@ function AdminShell() {
     }
     return 'Console'
   }, [visibleNav, location.pathname, location.hash])
+
+  const bottomLinks = BOTTOM_LINKS.filter((link) =>
+    visibleNav.some((section) => section.items.some((item) => item.href.split('#')[0].startsWith(link.href))),
+  )
 
   if (!session) {
     return <Navigate to="/admin/login" replace />
@@ -128,6 +141,38 @@ function AdminShell() {
           <Outlet />
         </main>
       </div>
+
+      <nav className="bottom-nav" aria-label="Admin mobile navigation">
+        <ul className="bottom-nav__list">
+          {bottomLinks.map((link) => (
+            <li key={link.href}>
+              <NavLink
+                to={link.href}
+                end={link.end}
+                className={({ isActive }) => cn('bottom-nav__item', isActive && 'is-active')}
+              >
+                <span className="bottom-nav__icon">
+                  <Icon name={link.icon} size={20} />
+                </span>
+                <span>{link.label}</span>
+              </NavLink>
+            </li>
+          ))}
+          <li>
+            <button
+              type="button"
+              className="bottom-nav__item"
+              aria-label="Open admin menu"
+              onClick={() => setSidebarOpen(true)}
+            >
+              <span className="bottom-nav__icon">
+                <Icon name="menu" size={20} />
+              </span>
+              <span>Menu</span>
+            </button>
+          </li>
+        </ul>
+      </nav>
     </div>
   )
 }

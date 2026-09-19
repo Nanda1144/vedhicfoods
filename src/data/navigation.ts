@@ -67,3 +67,7 @@ export const ACCOUNT_MENU: AccountMenuEntry[] = [
   { label: 'FAQs & help', description: 'Shipping, returns & more', href: '/faq' },
   { label: 'Admin', description: 'Partner & staff login', href: '/admin/login' },
 ]
+
+export function isCustomerMenuEntry(entry: AccountMenuEntry): boolean {
+  return entry.href === '/admin/login'
+}

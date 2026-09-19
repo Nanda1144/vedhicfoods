@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useCart } from '@/context'
 import { orderService } from '@/services/orderService'
+import { invoiceService } from '@/services/invoiceService'
+import { invoiceEmailService } from '@/services/invoiceEmailService'
 import { useToast } from '@/context'
 import { AddressForm, emptyAddress, validateAddressFields, PaymentGateway } from '@/components/checkout'
 import type { AddressFormData } from '@/components/checkout'
@@ -85,7 +87,12 @@ export function CheckoutPage() {
         discount: coupon?.amount ?? 0,
       })
       clear()
-      push({ title: 'Order placed', description: `${order.orderNumber} is confirmed.` })
+      const invoice = await invoiceService.byOrderNumber(order.orderNumber)
+      await invoiceEmailService.send(invoice)
+      push({
+        title: 'Order placed',
+        description: `Invoice ${invoice.invoiceNumber} emailed to ${order.customerEmail}.`,
+      })
       navigate(`/order-success/${order.orderNumber}`)
     } catch (caught) {
       push({

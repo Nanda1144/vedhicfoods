@@ -87,7 +87,7 @@ export function AdminLoginPage() {
               autoComplete="username"
               placeholder="you@vedhifoods.example"
             />
-            <div className="field">
+<div className="field">
               <Input
                 label="Password"
                 type={showPassword ? 'text' : 'password'}
@@ -95,7 +95,17 @@ export function AdminLoginPage() {
                 onChange={(event) => setPassword(event.target.value)}
                 required
                 autoComplete="current-password"
-placeholder="••••••••"
+                placeholder="••••••••"
+                suffix={
+                  <button
+                    type="button"
+                    className="input-suffix-btn"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    onClick={() => setShowPassword((shown) => !shown)}
+                  >
+                    <Icon name={showPassword ? 'eye-off' : 'eye'} size={17} />
+                  </button>
+                }
               />
             </div>
 

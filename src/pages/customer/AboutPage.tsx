@@ -1,5 +1,5 @@
 import { COMPANY_MILESTONES } from '@/config/site'
-import { PageHeader, SectionHeader, SectionLink, Reveal, ButtonLink, Icon } from '@/components/common'
+import { PageHeader, SectionHeader, SectionLink, Reveal, ButtonLink, Icon, FaqSection } from '@/components/common'
 import { Testimonials } from '@/components/home/Testimonials'
 import { contentService } from '@/services/contentService'
 import { useAsync } from '@/hooks'
@@ -98,6 +98,16 @@ export function AboutPage() {
             action={<SectionLink to="/faq">Read our FAQ</SectionLink>}
           />
           <Testimonials items={testimonials.data ?? []} loading={testimonials.loading} />
+        </div>
+      </section>
+
+      <section className="section">
+        <div className="container">
+          <FaqSection
+            eyebrow="Quick answers"
+            title="Questions we hear a lot"
+            description="The essentials on our organic sourcing, shipping and returns — in plain words."
+          />
         </div>
       </section>
     </>

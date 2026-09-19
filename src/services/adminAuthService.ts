@@ -145,6 +145,9 @@ export const adminAuthService = {
     const session = this.session()
     if (!session) throw new ServiceError('UNAUTHORIZED', 'You must be signed in.')
     await mockRequest(() => null, { delay: 520, ...options })
+    if (!next || next.length < 8) {
+      throw new ServiceError('BAD_REQUEST', 'New password must be at least 8 characters.')
+    }
     if (current !== this.DEMO_PASSWORD) {
       throw new ServiceError('BAD_REQUEST', 'Current password is incorrect.')
     }

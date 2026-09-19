@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/utils/cn'
-import { Button, type IconName } from '../common'
+import { Button, BackButton, type IconName } from '../common'
 
 interface AdminPageHeaderProps {
   title: string
@@ -12,6 +12,7 @@ interface AdminPageHeaderProps {
 export function AdminPageHeader({ title, description, actions, className }: AdminPageHeaderProps) {
   return (
     <header className={cn('admin-page-header', className)}>
+      <BackButton className="admin-page-header__back" />
       <div className="admin-page-header__copy">
         <h1>{title}</h1>
         {description && <p>{description}</p>}

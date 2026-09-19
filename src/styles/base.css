@@ -34,6 +34,15 @@ body {
 .type-h1 {
   font-size: var(--text-h1);
 }
+
+.type-display {
+  font-size: clamp(2.25rem, 1.2rem + 5vw, 5.25rem);
+}
+
+.type-h1 {
+  font-size: clamp(1.875rem, 1.15rem + 3.4vw, 3.75rem);
+}
+
 .type-h2 {
   font-size: var(--text-h2);
   line-height: var(--leading-snug);
@@ -118,6 +127,32 @@ body {
   color: var(--color-primary);
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* --- Responsive media ----------------------------------------------------- */
+/* Global guard: no image, picture or video may exceed its container and must
+   keep intrinsic proportions unless a ratio box opts out explicitly.         */
+
+img,
+picture,
+video {
+  max-width: 100%;
+  height: auto;
+}
+
+img[width][height] {
+  aspect-ratio: auto;
+}
+
+figure {
+  max-width: 100%;
+}
+
+figcaption {
+  max-width: 60ch;
+  color: var(--color-text-muted);
+  font-size: var(--text-small);
+  line-height: var(--leading-relaxed);
 }
 
 /* --- Inline elements ------------------------------------------------------ */

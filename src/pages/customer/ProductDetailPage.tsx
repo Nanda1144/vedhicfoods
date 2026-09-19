@@ -9,7 +9,7 @@ import { formatCurrency } from '@/utils/format'
 import type { Product } from '@/types'
 import type { Crumb } from '@/components/common'
 import {
-  PageHeader, Rating, PriceDisplay, QuantitySelector, Badge, Tabs, ProductGridSkeleton,
+  PageHeader, BackButton, Rating, PriceDisplay, QuantitySelector, Badge, Tabs, ProductGridSkeleton,
   Icon, Button, LoadingState, ErrorState, Breadcrumb, EmptyState,
 } from '@/components/common'
 import { ProductGrid } from '@/components/product'
@@ -99,21 +99,25 @@ export function ProductDetailPage() {
             <h3>Ingredients</h3>
             <p>{data.ingredients.join(', ')}</p>
           </div>
-          <div>
-            <h3>Allergens</h3>
-            <p>{data.allergens.length ? data.allergens.join(', ') : 'No major allergens declared.'}</p>
+          <div className="product-specs__split">
+            <div>
+              <h3>Allergens</h3>
+              <p>{data.allergens.length ? data.allergens.join(', ') : 'No major allergens declared.'}</p>
+            </div>
+            <ul className="nutrition-list">
+              {data.nutrition.map((fact) => (
+                <li key={fact.label}>
+                  <span className="nutrition-list__label">{fact.label}</span>
+                  <strong className="nutrition-list__value">
+                    {fact.percent !== undefined ? `${fact.percent}%` : fact.value}
+                  </strong>
+                  <span className="nutrition-list__bar">
+                    {fact.percent !== undefined && <span style={{ width: `${Math.min(100, fact.percent)}%` }} />}
+                  </span>
+                </li>
+              ))}
+            </ul>
           </div>
-          <ul className="nutrition-list">
-            {data.nutrition.map((fact) => (
-              <li key={fact.label}>
-                <span className="nutrition-list__label">{fact.label}</span>
-                <span className="nutrition-list__bar">
-                  {fact.percent !== undefined && <span style={{ width: `${Math.min(100, fact.percent)}%` }} />}
-                </span>
-                <span className="nutrition-list__value">{fact.value}</span>
-              </li>
-            ))}
-          </ul>
         </div>
       ),
     },
@@ -204,6 +208,7 @@ export function ProductDetailPage() {
     <>
       <section className="section section--product">
         <div className="container">
+          <BackButton className="product-detail__back" />
           <Breadcrumb items={crumbs} className="product-detail__crumbs" />
 
           <div className="product-detail">

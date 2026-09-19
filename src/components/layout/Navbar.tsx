@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { cn } from '@/utils/cn'
-import { PRIMARY_NAV, ACCOUNT_MENU } from '@/data/navigation'
+import { PRIMARY_NAV } from '@/data/navigation'
 import { useCart, useSettings } from '@/context'
 import { useMediaQuery, useOnClickOutside } from '@/hooks'
 import { BREAKPOINTS } from '@/constants'
@@ -101,12 +101,10 @@ export function Navbar({ onOpenSearch, onOpenMenu, onOpenCart }: NavbarProps) {
               </button>
               {accountOpen && (
                 <div className="navbar__account-menu" role="menu" aria-label="Account menu">
-                  {ACCOUNT_MENU.map((entry) => (
-                    <Link key={entry.label} to={entry.href} className="navbar__account-item" role="menuitem" onClick={() => setAccountOpen(false)}>
-                      <span className="navbar__account-item-label">{entry.label}</span>
-                      <span className="navbar__account-item-desc">{entry.description}</span>
-                    </Link>
-                  ))}
+                  <Link to="/admin/login" className="navbar__account-item" role="menuitem" onClick={() => setAccountOpen(false)}>
+                    <span className="navbar__account-item-label">Login</span>
+                    <span className="navbar__account-item-desc">Sign in to your account</span>
+                  </Link>
                 </div>
               )}
             </div>

@@ -166,7 +166,7 @@
   --text-h4: clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem);
   --text-h5: clamp(1.0625rem, 1rem + 0.3vw, 1.25rem);
   --text-body-lg: clamp(1.0625rem, 1rem + 0.3vw, 1.1875rem);
-  --text-body: 1rem;
+  --text-body: clamp(0.9375rem, 0.875rem + 0.4vw, 1.0625rem);
   --text-small: 0.875rem;
   --text-caption: 0.75rem;
   --text-button: 0.9375rem;

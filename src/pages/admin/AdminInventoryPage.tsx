@@ -197,9 +197,13 @@ export function AdminInventoryPage() {
             <li key={alert.productId} className="admin-product-cell" style={{ justifyContent: 'space-between' }}>
               <span className="admin-product-cell">
                 <img src={alert.image ?? ''} alt="" className="admin-product-cell__thumb" loading="lazy" />
-                <span>
+                <span className="inventory-alert__copy">
                   <strong>{alert.name}</strong>
                   <span className="type-caption">{alert.sku}</span>
+                  <span className="type-caption inventory-alert__details">
+                    {alert.stock} in stock · reorder at {alert.reorderLevel} · suggest{' '}
+                    {Math.max(alert.reorderLevel * 4 - alert.stock, 0)}
+                  </span>
                 </span>
               </span>
               <span className="row" style={{ gap: 12 }}>

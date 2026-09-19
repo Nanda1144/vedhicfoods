@@ -6,12 +6,12 @@ import { useAdminAuth } from '@/context/AdminAuthContext'
 import { useAsync } from '@/hooks'
 import { useToast } from '@/context'
 import { formatDate } from '@/utils/format'
-import { AdminPageHeader, DataTable, StatusPill, ConfirmDialog, AdminToolbar, PaginationBar } from '@/components/admin'
+import { AdminPageHeader, DataTable, StatusPill, ConfirmDialog, AdminToolbar, PaginationBar, ImageUploadField } from '@/components/admin'
 import type { Column } from '@/components/admin'
 import type { Permission, RoleName, StaffMember } from '@/types'
 import { PERMISSIONS } from '@/data/admin'
 import { Badge, Button, Modal, Skeleton, Icon } from '@/components/common'
-import { Field, Input, Select } from '@/components/common/form'
+import { Field, Input, Select, Textarea } from '@/components/common/form'
 import { initials } from '@/utils/format'
 
 const PAGE_SIZE = 8
@@ -316,23 +316,35 @@ function InviteModal({
     email: '',
     phone: '',
     role: 'manager' as RoleName,
+    photo: '',
+    address: '',
   })
+  const [permissions, setPermissions] = useState<Permission[]>(ROLE_DEFAULT_PERMISSIONS[form.role] ?? [])
   const [saving, setSaving] = useState(false)
+
+  const togglePermission = (permission: Permission) => {
+    setPermissions((current) =>
+      current.includes(permission) ? current.filter((item) => item !== permission) : [...current, permission],
+    )
+  }
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     setSaving(true)
     try {
-      await adminService.createStaff({
+      const payload = {
         name: form.name.trim(),
         email: form.email.trim().toLowerCase(),
         phone: form.phone.trim(),
         role: form.role,
-        status: 'invited',
+        status: 'invited' as const,
         employeeId: `EMP-${String(302 + Math.floor(Math.random() * 900))}`,
-        permissions: ROLE_DEFAULT_PERMISSIONS[form.role] ?? [],
+        permissions: permissions.length > 0 ? [...permissions] : ROLE_DEFAULT_PERMISSIONS[form.role] ?? [],
+        photo: form.photo,
+        address: form.address.trim(),
         createdAt: new Date().toISOString(),
-      })
+      }
+      await adminService.createStaff(payload)
       push({ title: 'Invitation sent', description: `${form.name} can now join as ${form.role}.` })
       onSaved()
     } catch (caught) {
@@ -370,18 +382,50 @@ function InviteModal({
           <Field label="Phone">
             <Input type="tel" value={form.phone} onChange={(event) => setForm((c) => ({ ...c, phone: event.target.value }))} placeholder="+91 …" />
           </Field>
-          <Field label="Role" required hint="Permissions can be fine-tuned after inviting.">
+          <Field label="Role" required hint="The role's default permissions are preselected. Adjust below.">
             <Select
               value={form.role}
-              onChange={(event) => setForm({ ...form, role: event.target.value as RoleName })}
+              onChange={(event) => {
+                const nextRole = event.target.value as RoleName
+                setForm((c) => ({ ...c, role: nextRole }))
+                setPermissions([...(ROLE_DEFAULT_PERMISSIONS[nextRole] ?? [])])
+              }}
               aria-label="Role"
               options={roles.map((role) => ({ value: role.name, label: role.name }))}
             />
           </Field>
         </div>
+        <ImageUploadField
+          label="Staff photo"
+          hint="A photo so teammates recognise this person. Optional."
+          value={form.photo}
+          onChange={(photo) => setForm((c) => ({ ...c, photo }))}
+        />
+        <Field label="Communication address" hint="Postal address for deliveries, dispatch notices and comms. Optional.">
+          <Textarea
+            rows={3}
+            value={form.address}
+            onChange={(event) => setForm((c) => ({ ...c, address: event.target.value }))}
+            placeholder="House / building, street, area, city, state, PIN…"
+          />
+        </Field>
         <div className="admin-form__section">
-          <p className="admin-form__section-title">Assigned permissions</p>
-          <PreciseList permissions={ROLE_DEFAULT_PERMISSIONS[form.role] ?? []} />
+          <p className="admin-form__section-title">Permissions / role assignment</p>
+          <p className="admin-muted" style={{ marginTop: 0 }}>
+            Tick exactly what this person may do. Starting from the {form.role} role defaults.
+          </p>
+          <div className="perm-grid">
+            {PERMISSIONS.map((permission) => (
+              <label key={permission} className="perm-chip">
+                <input
+                  type="checkbox"
+                  checked={permissions.includes(permission)}
+                  onChange={() => togglePermission(permission)}
+                />
+                <span>{permission}</span>
+              </label>
+            ))}
+          </div>
         </div>
       </form>
     </Modal>
@@ -504,20 +548,6 @@ function StaffEditModal({
         </div>
       </form>
     </Modal>
-  )
-}
-
-function PreciseList({ permissions }: { permissions: Permission[] }) {
-  return (
-    <ul className="precise-list">
-      {permissions.slice(0, 8).map((permission) => (
-        <li key={permission}>
-          <Icon name="check" size={13} />
-          {permission}
-        </li>
-      ))}
-      {permissions.length > 8 && <li className="admin-muted">+ {permissions.length - 8} more</li>}
-    </ul>
   )
 }
 

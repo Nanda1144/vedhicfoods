@@ -23,12 +23,22 @@ export function Navbar({ onOpenSearch, onOpenMenu, onOpenCart }: NavbarProps) {
 
   useOnClickOutside([accountRef], () => setAccountOpen(false))
 
+  const [didPop, setDidPop] = useState(false)
+
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12)
     onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
+
+  // Subtle "pop" whenever an item is added to the basket.
+  useEffect(() => {
+    if (!count) return
+    setDidPop(true)
+    const timer = window.setTimeout(() => setDidPop(false), 500)
+    return () => window.clearTimeout(timer)
+  }, [count])
 
   useEffect(() => {
     const onShortcut = (event: KeyboardEvent) => {
@@ -119,7 +129,7 @@ export function Navbar({ onOpenSearch, onOpenMenu, onOpenCart }: NavbarProps) {
           >
             <Icon name="cart" size={21} />
             {count > 0 && (
-              <span className="navbar__cart-count" aria-live="polite">
+              <span className={cn('navbar__cart-count', didPop && 'is-pop')} aria-live="polite">
                 {count > 9 ? '9+' : count}
               </span>
             )}

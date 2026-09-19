@@ -9,6 +9,7 @@ export const TESTIMONIALS: Testimonial[] = [
       'The foxtail millet laddu tastes exactly like the one my grandmother made. Not overly sweet, and you can actually taste the ghee.',
     rating: 5,
     avatarInitials: 'AR',
+    product: 'Foxtail millet laddu',
   },
   {
     id: 't2',
@@ -18,6 +19,7 @@ export const TESTIMONIALS: Testimonial[] = [
       'We switched our family to their ragi rotis six months ago. Forty seconds on the tawa and dinner is sorted — no preservative aftertaste at all.',
     rating: 5,
     avatarInitials: 'VM',
+    product: 'Ragi roti · 6-pack',
   },
   {
     id: 't3',
@@ -27,6 +29,7 @@ export const TESTIMONIALS: Testimonial[] = [
       'The packaging tells you the farm and the harvest lot. That level of traceability is rare for organic food in India.',
     rating: 5,
     avatarInitials: 'PN',
+    product: 'Organic grains hamper',
   },
   {
     id: 't4',
@@ -36,6 +39,7 @@ export const TESTIMONIALS: Testimonial[] = [
       'Ordered for Diwali gifting. Every single recipient asked where I got them. The dry fruit laddu is genuinely premium.',
     rating: 5,
     avatarInitials: 'RD',
+    product: 'Dry fruit laddu · gift box',
   },
   {
     id: 't5',
@@ -45,6 +49,7 @@ export const TESTIMONIALS: Testimonial[] = [
       'My son drinks the sprouted ragi malt every morning. It mixes smoothly and is far less sweet than supermarket brands.',
     rating: 4,
     avatarInitials: 'MI',
+    product: 'Sprouted ragi malt',
   },
   {
     id: 't6',
@@ -54,6 +59,7 @@ export const TESTIMONIALS: Testimonial[] = [
       'Delivery was quick, the invoice was GST-compliant, and the products were still cold on arrival. Very professionally run.',
     rating: 5,
     avatarInitials: 'KB',
+    product: 'Festive gift hamper',
   },
 ]
 

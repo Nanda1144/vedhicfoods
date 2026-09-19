@@ -10,7 +10,7 @@ import type { Column } from '@/components/admin'
 import type { Product } from '@/types'
 import { CATEGORIES } from '@/data/categories'
 import { Badge, Button, Modal, Skeleton } from '@/components/common'
-import { Field, Input, Select, Switch, Textarea } from '@/components/common/form'
+import { Field, Input, Select, Switch, Textarea, ImageUpload } from '@/components/common/form'
 
 const PAGE_SIZE = 10
 
@@ -481,9 +481,14 @@ function ProductModal({ product, onClose, onSaved }: { product: Product | null; 
         </div>
 
         <div className="admin-form__grid">
-          <Field label="Primary image URL">
-            <Input value={form.image} onChange={(event) => patch('image', event.target.value)} placeholder="https://…" />
-          </Field>
+          <div className="admin-form__span-2">
+            <ImageUpload
+              label="Product image"
+              hint="Upload a photo from your device (recommended) or paste an image URL. Uploads are stored locally in this prototype."
+              value={form.image}
+              onChange={(value) => patch('image', value)}
+            />
+          </div>
           <Field label="Tags" hint="Comma separated">
             <Input value={form.tags} onChange={(event) => patch('tags', event.target.value)} placeholder="gluten-free, energy" />
           </Field>

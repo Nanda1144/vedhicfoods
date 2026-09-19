@@ -505,6 +505,13 @@
   font-weight: var(--weight-semibold);
 }
 
+.input__suffix {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-muted);
+}
+
 .input--textarea {
   align-items: stretch;
   padding: var(--space-3) var(--space-4);

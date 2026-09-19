@@ -1,4 +1,4 @@
-import { forwardRef, useId, type InputHTMLAttributes } from 'react'
+import { forwardRef, useId, type InputHTMLAttributes, type ReactNode } from 'react'
 import { cn } from '@/utils/cn'
 import { Field } from './Field'
 import { Icon, type IconName } from '../Icon'
@@ -8,6 +8,7 @@ export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   error?: string
   hint?: string
   prefix?: string
+  suffix?: ReactNode
   icon?: IconName
   required?: boolean
   srLabel?: boolean
@@ -19,6 +20,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
     error,
     hint,
     prefix,
+    suffix,
     icon,
     required,
     srLabel,
@@ -34,7 +36,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   const inputId = id ?? generatedId
 
   const control = (
-    <span className={cn('input', icon && 'input--icon', prefix !== undefined && 'input--prefix', error && 'is-invalid', className)}>
+    <span className={cn('input', icon && 'input--icon', prefix !== undefined && 'input--prefix', suffix !== undefined && 'input--suffix', error && 'is-invalid', className)}>
       {icon && <Icon name={icon} size={17} className="input__icon" />}
       {prefix !== undefined && <span className="input__prefix">{prefix}</span>}
       <input
@@ -45,6 +47,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
         aria-describedby={ariaDescribedBy ?? (error || hint ? `${inputId}-help` : undefined)}
         {...props}
       />
+      {suffix !== undefined && <span className="input__suffix">{suffix}</span>}
     </span>
   )
 

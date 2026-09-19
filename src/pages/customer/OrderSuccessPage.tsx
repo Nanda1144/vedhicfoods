@@ -36,19 +36,40 @@ export function OrderSuccessPage() {
 
   return (
     <>
-      <section className="order-success-hero">
+      <section className="order-success-hero success-x">
         <div className="container center">
-          <span className="order-success-hero__check">
-            <Icon name="check" size={34} />
-          </span>
-          <h1>Thank you! Your order is confirmed</h1>
-          <p>
-            Order <strong>{data.orderNumber}</strong> · placed {formatDateTime(data.placedAt)}
-          </p>
+          <div className="success-x__seal" aria-hidden="true">
+            <span className="success-x__ring success-x__ring--a" />
+            <span className="success-x__ring success-x__ring--b" />
+            <span className="success-x__spark success-x__spark--1" />
+            <span className="success-x__spark success-x__spark--2" />
+            <span className="success-x__spark success-x__spark--3" />
+            <span className="order-success-hero__check">
+              <Icon name="check" size={34} />
+            </span>
+          </div>
+
+          <p className="type-eyebrow">Order {data.orderNumber} · placed {formatDateTime(data.placedAt)}</p>
+
+          <h1 className="success-x__title">
+            Goodness is <em>on its way.</em>
+          </h1>
+
           <p className="order-success-hero__hint">
-            A confirmation has been sent to <strong>{data.customerEmail}</strong>. We dispatch fresh batches within 48 hours.
+            A confirmation has been sent to <strong>{data.customerEmail}</strong>. We dispatch fresh batches within
+            48 hours.
           </p>
+
+          <p className="success-x__total">
+            <span>Order total</span>
+            <strong>{formatCurrency(data.total)}</strong>
+          </p>
+
           <div className="cluster cluster-3">
+            <a className="btn btn--outline" href="#order-summary">
+              <Icon name="eye" size={18} />
+              <span>View order</span>
+            </a>
             <ButtonLink to={`/invoice/${data.invoiceId ?? ''}`} variant="outline" icon="download">
               View invoice
             </ButtonLink>
@@ -59,7 +80,7 @@ export function OrderSuccessPage() {
         </div>
       </section>
 
-      <section className="section">
+      <section className="section" id="order-summary">
         <div className="container">
           <div className="order-confirm-grid">
             <div className="order-card">

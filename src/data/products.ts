@@ -566,6 +566,15 @@ function buildSpecifications(seed: ProductSeed): ProductSpecification[] {
   ]
 }
 
+/**
+ * Per-product reorder level. Scales with typical stock so fast-moving staples
+ * (higher seeded stock) alert earlier in absolute units than slow movers.
+ */
+function lowStockThresholdFor(seed: ProductSeed): number {
+  if (seed.stock <= 0) return 12
+  return Math.min(40, Math.max(12, Math.round(seed.stock * 0.25)))
+}
+
 function toProduct(seed: ProductSeed, index: number): Product {
   return {
     id: `prd-${String(index + 1).padStart(3, '0')}`,
@@ -584,6 +593,7 @@ function toProduct(seed: ProductSeed, index: number): Product {
     rating: seed.rating,
     reviewCount: seed.reviews,
     stock: seed.stock,
+    lowStockThreshold: lowStockThresholdFor(seed),
     sku: `VF-${seed.slug.toUpperCase().replace(/-/g, '').slice(0, 8)}`,
     ingredients: seed.ingredients,
     allergens: ['May contain traces of tree nuts.'],

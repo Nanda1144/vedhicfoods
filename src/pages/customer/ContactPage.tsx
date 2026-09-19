@@ -4,6 +4,7 @@ import { useAsync } from '@/hooks'
 import { useToast, useSettings } from '@/context'
 import { isEmail, isPhoneIN, required, validate } from '@/utils/validators'
 import { PageHeader, Input, Textarea, Select, Button, Icon } from '@/components/common'
+import { FaqSection } from '@/components/home'
 
 interface ContactForm {
   name: string
@@ -138,6 +139,13 @@ export function ContactPage() {
           </div>
         </div>
       </section>
+
+      <FaqSection
+        limit={4}
+        eyebrow="Quick answers"
+        title="Before you write in"
+        description="Most questions are answered in seconds — check these first."
+      />
     </>
   )
 }

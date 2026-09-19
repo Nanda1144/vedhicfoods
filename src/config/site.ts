@@ -46,6 +46,7 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   taxRate: SITE.taxRate,
   announcement: SITE.announcement,
   announcementActive: true,
+  promotionActive: true,
   socials: [...SITE.socials],
   businessHours: 'Mon – Sat · 9:00 AM to 7:00 PM IST',
 }

@@ -2,9 +2,7 @@ import { lazy, useEffect, type ComponentType, type ReactNode } from 'react'
 import { createBrowserRouter } from 'react-router-dom'
 import { CustomerLayout } from '@/layouts/CustomerLayout'
 import { AdminLayout, RequireAdmin } from '@/components/admin'
-import { PlaceholderFactory } from '@/pages/admin/PlaceholderFactory'
 import { NotFoundPage } from '@/pages/customer/NotFoundPage'
-import type { IconName } from '@/components/common'
 import type { Permission } from '@/types'
 
 export function lazyNamed<T extends ComponentType>(importFn: () => Promise<{ [name: string]: T }>, name: string) {
@@ -67,10 +65,6 @@ const titled = (Component: ComponentType, title: string) => (
 /** Guarded admin page: no session → login, missing permission → 403. */
 const guarded = (Component: ComponentType, title: string, permission: Permission) => (
   <RequireAdmin permission={permission}>{titled(Component, title)}</RequireAdmin>
-)
-
-const placeholder = (pageKey: string, fallbackTitle: string, fallbackIcon: IconName) => (
-  <PlaceholderFactory pageKey={pageKey} fallbackTitle={fallbackTitle} fallbackIcon={fallbackIcon} />
 )
 
 export const router = createBrowserRouter([

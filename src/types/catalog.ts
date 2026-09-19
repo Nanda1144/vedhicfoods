@@ -57,6 +57,8 @@ export interface Product {
   isFeatured: boolean
   /** Admin availability toggle. Missing = active (seeded products). */
   active?: boolean
+  /** Unit count at or below which the product is flagged "low stock". */
+  lowStockThreshold?: number
   createdAt: string
 }
 
@@ -118,6 +120,8 @@ export interface Testimonial {
   quote: string
   rating: number
   avatarInitials: string
+  /** Product the customer purchased (shown in the editorial layout). */
+  product?: string
 }
 
 export interface FaqItem {

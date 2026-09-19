@@ -1,6 +1,6 @@
 import { COMPANY_MILESTONES } from '@/config/site'
 import { PageHeader, SectionHeader, SectionLink, Reveal, ButtonLink, Icon } from '@/components/common'
-import { Testimonials } from '@/components/home/Testimonials'
+import { Testimonials, FaqSection } from '@/components/home'
 import { contentService } from '@/services/contentService'
 import { useAsync } from '@/hooks'
 import type { IconName } from '@/components/common'
@@ -89,6 +89,13 @@ export function AboutPage() {
           </div>
         </div>
       </section>
+
+      <FaqSection
+        limit={4}
+        eyebrow="Good to know"
+        title="Questions families ask"
+        description="Sourcing, shelf life and how our small-batch kitchen ships to your home."
+      />
 
       <section className="section section--alt">
         <div className="container">

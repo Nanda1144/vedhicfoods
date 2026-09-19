@@ -29,7 +29,7 @@ import type {
 import { STORAGE_KEYS } from '../config/site'
 import { storage } from '../utils/storage'
 
-function actor(): AuditInput {
+function actor(): Pick<AuditInput, 'actor' | 'actorRole'> {
   const session = adminAuthService.session()
   return {
     actor: session?.name ?? 'System',
@@ -287,7 +287,7 @@ export const adminService = {
         action: 'create',
         entity: 'Promotion',
         entityId: promotion.id,
-        summary: `Created promotion “${promotion.name}”`,
+        summary: `Created promotion “${promotion.title}”`,
         tone: 'success',
       })
       return promotion
@@ -301,7 +301,7 @@ export const adminService = {
         action: 'update',
         entity: 'Promotion',
         entityId: id,
-        summary: `Updated promotion “${patch.name ?? id}”`,
+        summary: `Updated promotion “${patch.title ?? id}”`,
         tone: 'info',
       })
     }, { delay: 280, ...options })

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { productService } from '@/services/productService'
 import { contentService } from '@/services/contentService'
@@ -20,10 +20,24 @@ export function ProductDetailPage() {
   const { add, close, open } = useCart()
   const [quantity, setQuantity] = useState(1)
   const [activeImage, setActiveImage] = useState(0)
+  const [stickyVisible, setStickyVisible] = useState(false)
+  const buyBlockRef = useRef<HTMLDivElement>(null)
 
   const product = useAsync(() => productService.bySlug(slug), [slug])
   const related = useAsync(() => productService.related(slug, 4), [slug])
   const reviews = useAsync(() => contentService.reviewsFor(product.data?.id ?? ''), [product.data?.id])
+
+  // Show the compact sticky purchase bar once the main buy block has left view.
+  useEffect(() => {
+    const block = buyBlockRef.current
+    if (!block || !product.data) return
+    const observer = new IntersectionObserver(
+      (entries) => setStickyVisible(!(entries[0]?.isIntersecting ?? true)),
+      { rootMargin: '0px 0px -12% 0px', threshold: 0 },
+    )
+    observer.observe(block)
+    return () => observer.disconnect()
+  }, [product.data])
 
   const data = product.data
   const category = data ? productService.category(data.categorySlug) : undefined
@@ -258,7 +272,7 @@ export function ProductDetailPage() {
 
               <p className="product-info__desc">{data.shortDescription}</p>
 
-              <div className="product-info__buy">
+              <div className="product-info__buy" ref={buyBlockRef}>
                 <QuantitySelector value={quantity} max={Math.min(99, data.stock)} onChange={setQuantity} disabled={out} />
                 <Button size="lg" fullWidth disabled={out} onClick={handleAdd} icon={out ? 'ban' : 'cart'}>
                   {out ? 'Out of stock' : `Add to basket · ${formatCurrency(data.price * quantity)}`}
@@ -323,7 +337,63 @@ export function ProductDetailPage() {
           </div>
         </section>
       )}
+
+      <StickyPurchaseBar
+        visible={stickyVisible}
+        product={data}
+        quantity={quantity}
+        onQuantity={setQuantity}
+        onAdd={handleAdd}
+        onBuyNow={handleBuyNow}
+        out={out}
+      />
     </>
+  )
+}
+
+/* --------------------------------------------- Sticky purchase bar (mobile-first) */
+
+function StickyPurchaseBar({
+  visible,
+  product,
+  quantity,
+  onQuantity,
+  onAdd,
+  onBuyNow,
+  out,
+}: {
+  visible: boolean
+  product: Product
+  quantity: number
+  onQuantity: (value: number) => void
+  onAdd: () => void
+  onBuyNow: () => void
+  out: boolean
+}) {
+  if (!visible) return null
+  return (
+    <div className="purchase-sticky" role="region" aria-label="Quick purchase">
+      <div className="purchase-sticky__inner container">
+        <div className="purchase-sticky__product">
+          <img src={product.images[0] ?? ''} alt="" />
+          <span className="purchase-sticky__copy">
+            <strong className="purchase-sticky__name">{product.name}</strong>
+            <span className="purchase-sticky__price">
+              <PriceDisplay price={product.price} mrp={product.mrp} size="sm" />
+            </span>
+          </span>
+        </div>
+        <div className="purchase-sticky__actions">
+          <QuantitySelector value={quantity} max={Math.min(99, product.stock)} onChange={onQuantity} disabled={out} size="sm" />
+          <Button className="purchase-sticky__add" disabled={out} onClick={onAdd} icon={out ? 'ban' : 'cart'}>
+            {out ? 'Out of stock' : 'Add to basket'}
+          </Button>
+          <Button variant="accent" className="purchase-sticky__buy" disabled={out} onClick={onBuyNow} icon="lock">
+            Buy now
+          </Button>
+        </div>
+      </div>
+    </div>
   )
 }
 

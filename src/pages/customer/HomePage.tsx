@@ -1,54 +1,140 @@
-import { useCallback, useState } from 'react'
-import { SITE, TRUST_BADGES, COMPANY_MILESTONES } from '@/config/site'
+import { useCallback, useMemo, useState } from 'react'
+import { COMPANY_MILESTONES } from '@/config/site'
 import { productService } from '@/services/productService'
 import { contentService, newsletterService } from '@/services/contentService'
+import { couponService } from '@/services/couponService'
 import { useAsync } from '@/hooks'
 import { useToast, useSettings } from '@/context'
-import type { IconName } from '@/components/common'
+import { staggerDelay } from '@/utils/motion'
+import type { Category } from '@/types'
 import {
   Icon,
   ButtonLink,
   SectionHeader,
-  SectionLink,
   Reveal,
-  Badge,
-  ProductGridSkeleton,
 } from '@/components/common'
-import { ProductGrid, CategoryCard } from '@/components/product'
-import { Testimonials } from '@/components/home/Testimonials'
+import { CategoryCard } from '@/components/product'
+import { Testimonials, ImmerseHero, ProductShowcase, ScrollRail, FaqSection, type HeroIngredient } from '@/components/home'
 
-const TRUST_ICONS: Array<IconName> = ['leaf', 'shield', 'truck', 'award']
-
-const FEATURES: Array<{ icon: IconName; title: string; copy: string }> = [
-  { icon: 'leaf', title: 'Certified organic sourcing', copy: 'India Organic & Jaivik Bharat audit trails on every lot.' },
-  { icon: 'shield', title: 'Zero preservatives', copy: 'Nothing artificial — ever. Our shelf life comes from ghee, care and heat.' },
-  { icon: 'truck', title: 'Small-batch freshness', copy: 'Made weekly and dispatched within 48 hours of production.' },
-  { icon: 'award', title: 'Fair to farmers', copy: '40+ smallholder farms paid above market rates, year-round.' },
+const MARQUEE_WORDS = [
+  'Stone-ground',
+  'Small-batch',
+  'Certified organic',
+  'Farmer-direct',
+  'Zero preservatives',
+  'Hand-rolled weekly',
 ]
 
-const TRADITIONAL_STEPS: Array<{ icon: IconName; title: string; copy: string }> = [
-  { icon: 'leaf', title: 'Single-origin harvests', copy: 'Every lot traces to one farm and one season of certified organic grain.' },
-  { icon: 'clock', title: 'Slow-roasted, low flame', copy: 'Stone-ground in small lots and roasted gently — never rushed, never reused oil.' },
-  { icon: 'box', title: 'Made fresh every week', copy: 'Rolled, pressed and packed by hand in weekly batches, never warehoused.' },
-  { icon: 'truck', title: 'Traced to your door', copy: 'A harvest-lot code on every pack, shipped within 48 hours of production.' },
-]
+const PRINCIPLES = [
+  {
+    n: '01',
+    title: 'Pure ingredients',
+    copy: 'Certified-organic grains from 40+ small farms. No preservatives, no colour, no shortcuts — ever.',
+    icon: 'leaf',
+    imageSlug: 'organic-millets',
+  },
+  {
+    n: '02',
+    title: 'Traditional knowledge',
+    copy: 'Recipes passed down three generations, kept slow and unhurried — stone-ground, low-flame, by hand.',
+    icon: 'sparkles',
+    imageSlug: 'traditional-rotis',
+  },
+  {
+    n: '03',
+    title: 'Careful preparation',
+    copy: 'Ghee, jaggery and patient heat instead of chemistry. Made in small weekly batches, never warehoused.',
+    icon: 'clock',
+    imageSlug: 'millet-laddus',
+  },
+  {
+    n: '04',
+    title: 'Premium quality',
+    copy: 'Every lot traceable to a single farm and harvest season, with a lot code printed on every pack.',
+    icon: 'award',
+    imageSlug: 'heritage-grains',
+  },
+] as const
 
-const ORGANIC_VALUES: Array<{ icon: IconName; title: string; copy: string }> = [
-  { icon: 'leaf', title: 'Certified organic', copy: 'India Organic & Jaivik Bharat certified, audited twice a year.' },
-  { icon: 'shield', title: 'No preservatives or colour', copy: 'Shelf life comes from ghee, jaggery and patient drying — never chemistry.' },
-  { icon: 'star', title: 'Heirloom native seeds', copy: 'Khapli wheat, native red rice and heritage millets saved from native seed lines.' },
-  { icon: 'check-circle', title: 'Fair to the farmers who grow it', copy: 'Paid above market rates to 40+ smallholder farms, year-round.' },
-]
+const JOURNEY = [
+  {
+    icon: 'leaf',
+    title: 'The soil',
+    copy: 'Single-origin, certified-organic farms across Karnataka, paid fairly and traced lot by lot.',
+  },
+  {
+    icon: 'box',
+    title: 'Harvest & mill',
+    copy: 'Grains are cleaned, de-stoned and stone-ground within days of harvest — never warehoused.',
+  },
+  {
+    icon: 'clock',
+    title: 'Slow preparation',
+    copy: 'Roasted gently over low flame and rolled by hand in small weekly batches.',
+  },
+  {
+    icon: 'truck',
+    title: 'Your table',
+    copy: 'Packed fresh and dispatched within 48 hours, with the harvest story on the pack.',
+  },
+] as const
+
+const MODERN_FEATURES = [
+  { title: 'Ready-to-eat & ready-in-minutes', copy: 'From jaggery laddu to ghee-roasted malt — wholesome food that fits a busy day.' },
+  { title: 'Effortless ordering', copy: 'Add to cart, checkout securely, done. GST invoice with every order.' },
+  { title: 'Premium, airtight packaging', copy: 'Designed to keep aroma and texture intact from our kitchen to yours.' },
+  { title: 'Reliably delivered', copy: 'Dispatched in 48 hours and delivered across India with live tracking.' },
+] as const
+
+function heroIngredients(categories: Category[]): HeroIngredient[] {
+  const bySlug = new Map(categories.map((category) => [category.slug, category]))
+  const pick = (slug: string) => bySlug.get(slug)
+  const items: HeroIngredient[] = []
+  const laddu = pick('millet-laddus')
+  const roti = pick('traditional-rotis')
+  const millet = pick('organic-millets')
+  const ready = pick('ready-to-eat')
+  if (laddu) items.push({ image: laddu.image, label: 'Hand-rolled laddu', sub: 'Jaggery · ghee', position: 'a' })
+  if (roti) items.push({ image: roti.image, label: 'Ragi roti', sub: 'Stone-ground', position: 'b' })
+  if (millet) items.push({ image: millet.image, label: 'Farm-fresh millets', sub: 'Single-origin', position: 'c' })
+  if (ready) items.push({ image: ready.image, label: 'Ready in minutes', sub: 'Zero maida', position: 'd' })
+  return items
+}
 
 export function HomePage() {
   const { settings } = useSettings()
   const { push } = useToast()
 
-  const bestSellers = useAsync(() => productService.bestSellers(4), [])
-  const premium = useAsync(() => productService.featured(6), [])
+  const bestSellers = useAsync(() => productService.bestSellers(8), [])
+  const featured = useAsync(() => productService.featured(6), [])
   const testimonials = useAsync(() => contentService.testimonials(), [])
   const categories = useAsync(() => productService.categories(), [])
-  const featuredCategories = categories.data?.filter((category) => category.featured).slice(0, 4) ?? []
+  const festiveCoupons = useAsync(() => couponService.available(), [])
+
+  const orderedCategories = useMemo(
+    () => [...(categories.data ?? [])].sort((a, b) => a.sortOrder - b.sortOrder),
+    [categories.data],
+  )
+  const ingredients = useMemo(() => heroIngredients(categories.data ?? []), [categories.data])
+  const dishImage = useMemo(() => {
+    const laddu = categories.data?.find((category) => category.slug === 'millet-laddus')
+    return laddu?.image ?? categories.data?.[0]?.image ?? ''
+  }, [categories.data])
+  const modernImage = useMemo(
+    () => categories.data?.find((category) => category.slug === 'ready-to-eat')?.image ?? '',
+    [categories.data],
+  )
+  const storyImage = useMemo(
+    () => categories.data?.find((category) => category.slug === 'heritage-grains')?.image ?? '',
+    [categories.data],
+  )
+  const principleImages = useMemo(() => {
+    const map = new Map((categories.data ?? []).map((category) => [category.slug, category.image]))
+    return PRINCIPLES.map((principle) => map.get(principle.imageSlug) ?? '')
+  }, [categories.data])
+
+  const festiveCode = festiveCoupons.data?.find((coupon) => coupon.code === 'FESTIVE15')
+  const festiveActive = settings.promotionActive !== false && Boolean(festiveCode)
 
   const handleSubscribe = useCallback(
     async (email: string) => {
@@ -60,290 +146,338 @@ export function HomePage() {
 
   return (
     <>
-      <Hero announcement={settings.announcementActive ? settings.announcement : settings.tagline} />
+      <ImmerseHero announcement={settings.announcementActive ? settings.announcement : settings.tagline} dishImage={dishImage} ingredients={ingredients} />
 
-      <section className="section section--alt trust-strip" aria-label="Why shop with Vedhi">
-        <div className="container trust-strip__grid">
-          {TRUST_BADGES.map((badge, index) => (
-            <div key={badge.title} className="trust-strip__item">
-              <span className="trust-strip__icon">
-                <Icon name={TRUST_ICONS[index] ?? 'leaf'} size={20} />
-              </span>
-              <span>
-                <strong>{badge.title}</strong>
-                <span>{badge.copy}</span>
-              </span>
-            </div>
-          ))}
-        </div>
-      </section>
+      <MarqueeBand />
 
-      <section className="section" id="categories">
+      <BrandStatement />
+
+      <Philosophy images={principleImages} />
+
+      <section className="section section--tinted discover-sec" id="categories">
         <div className="container">
           <SectionHeader
-            eyebrow="Shop by taste"
-            title="From our kitchen, to yours"
-            description="Every category is made in small batches from single-origin organic grains."
-            action={<SectionLink to="/categories">View all categories</SectionLink>}
+            eyebrow="Shop by mood"
+            title="Discover your kind of goodness"
+            description="Every category is made in small batches from single-origin organic grain."
+            align="center"
           />
-          <div className="category-grid category-grid--4">
-            {featuredCategories.map((category, index) => (
-              <Reveal key={category.id} delay={index * 60}>
-                <CategoryCard category={category} />
+          <div className="discover">
+            {orderedCategories.map((category, index) => (
+              <Reveal key={category.id} delay={staggerDelay(index, 60)} className="discover__cell">
+                <CategoryCard category={category} featured={index === 0} showDescription />
               </Reveal>
             ))}
           </div>
         </div>
       </section>
 
-      <section className="section section--alt" id="bestsellers">
-        <div className="container">
-          <SectionHeader
-            eyebrow="Customer favourites"
-            title="The bestsellers"
-            description="Most-loved recipes, reordered again and again."
-            action={<SectionLink to="/shop">Shop all</SectionLink>}
-          />
-          {bestSellers.loading ? (
-            <ProductGridSkeleton count={4} />
-          ) : bestSellers.data?.length ? (
-            <ProductGrid products={bestSellers.data} />
-          ) : null}
-        </div>
-      </section>
+      <IngredientJourney />
 
-      <section className="section" id="premium">
-        <div className="container">
-          <SectionHeader
-            eyebrow="Crafted for connoisseurs"
-            title="The premium range"
-            description="Festival-grade laddus, gifting boxes and small-batch specials worth lingering over."
-            action={<SectionLink to="/shop">Shop all</SectionLink>}
-          />
-          {premium.loading ? (
-            <ProductGridSkeleton count={6} />
-          ) : premium.data?.length ? (
-            <ProductGrid products={premium.data} />
-          ) : null}
-        </div>
-      </section>
+      {featured.data && featured.data.length > 0 && <ProductShowcase products={featured.data} />}
 
-      <section className="section">
-        <div className="container">
-          <div className="split split--feature">
-            <Reveal className="split__media-wrap">
-              <div
-                className="split__media"
-                style={{ backgroundImage: 'url(https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=1200&q=80)' }}
-                role="img"
-                aria-label="A farm basket of organic grains and millets"
-              />
-            </Reveal>
-            <div className="split__copy">
-              <SectionHeader
-                eyebrow="Why Vedhi"
-                title="Slow-made, honestly priced, deeply good"
-                description="We pay real prices to real farmers, mill in small lots and never cut corners with preservatives."
-                align="left"
-              />
-              <ul className="feature-list">
-                {FEATURES.map((item) => (
-                  <li key={item.title} className="feature-item">
-                    <span className="feature-item__icon">
-                      <Icon name={item.icon} size={18} />
-                    </span>
-                    <span className="feature-item__copy">
-                      <strong>{item.title}</strong>
-                      <span>{item.copy}</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <ButtonLink to="/about" variant="outline">
-                More about us
-              </ButtonLink>
-            </div>
-          </div>
-        </div>
-      </section>
+      {storyImage && <StoryTeaser image={storyImage} />}
 
-      <section className="section section--tinted" id="traditional">
-        <div className="container">
-          <div className="split">
-            <Reveal className="split__media-wrap">
-              <div
-                className="split__media"
-                style={{ backgroundImage: 'url(https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=1200&q=80)' }}
-                role="img"
-                aria-label="A hand ground bowl of millet flour being prepared"
-              />
-            </Reveal>
-            <div className="split__copy">
-              <SectionHeader
-                eyebrow="Traditional preparation"
-                title="Made the way grandmothers made it"
-                description="No shortcuts are cheaper here. Every recipe follows the slow methods our founder learnt in her family kitchen."
-                align="left"
-              />
-              <ul className="feature-list">
-                {TRADITIONAL_STEPS.map((item) => (
-                  <li key={item.title} className="feature-item">
-                    <span className="feature-item__icon">
-                      <Icon name={item.icon} size={18} />
-                    </span>
-                    <span className="feature-item__copy">
-                      <strong>{item.title}</strong>
-                      <span>{item.copy}</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </div>
-      </section>
+      {modernImage && <MadeForModernLife image={modernImage} />}
 
-      <section className="section" id="ingredients">
-        <div className="container">
-          <div className="split split--swapped">
-            <div className="split__copy">
-              <SectionHeader
-                eyebrow="Organic ingredients"
-                title="Grown in soil, not sprayed into shape"
-                description="Single-origin grains from 40+ partner farms, certified organic and milled within days of harvest."
-                align="left"
-              />
-              <ul className="feature-list">
-                {ORGANIC_VALUES.map((item) => (
-                  <li key={item.title} className="feature-item">
-                    <span className="feature-item__icon">
-                      <Icon name={item.icon} size={18} />
-                    </span>
-                    <span className="feature-item__copy">
-                      <strong>{item.title}</strong>
-                      <span>{item.copy}</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-              <ButtonLink to="/categories" variant="outline" iconRight="arrow-right">
-                Explore the range
-              </ButtonLink>
-            </div>
-            <Reveal className="split__media-wrap">
-              <div
-                className="split__media"
-                style={{ backgroundImage: 'url(https://images.unsplash.com/photo-1464226184884-fa280b87c399?auto=format&fit=crop&w=1200&q=80)' }}
-                role="img"
-                aria-label="Greens growing on an organic farm"
-              />
-            </Reveal>
-          </div>
-        </div>
-      </section>
+      <ScrollRail
+        products={bestSellers.data ?? []}
+        eyebrow="Customer favourites"
+        title="Most loved, again and again"
+        description="The recipes our family reaches for week after week — reordered by thousands of homes."
+        viewAllTo="/shop"
+      />
 
-      <section className="section section--alt">
+      <section className="section" aria-label="Customer stories">
         <div className="container">
           <SectionHeader
             eyebrow="Proof, in their words"
             title="Loved across India"
-            description="Unedited reviews from people who cook with Vedhi every week."
+            description="Unedited words from people who cook with Vedhi every week."
+            align="center"
           />
           <Testimonials items={testimonials.data ?? []} loading={testimonials.loading} />
         </div>
       </section>
 
-      <section className="section" id="story">
-        <div className="container">
-          <SectionHeader
-            eyebrow="Our story"
-            title="Slow food, since 2009"
-            description="A family kitchen grew into a small-batch mill — the recipes, the sourcing and the standards never changed."
-            align="center"
-          />
-          <div className="milestones">
-            {COMPANY_MILESTONES.map((milestone, index) => (
-              <Reveal key={milestone.year} delay={index * 80}>
-                <article className="milestone-card">
-                  <span className="milestone-card__year">{milestone.year}</span>
-                  <h3>{milestone.title}</h3>
-                  <p>{milestone.copy}</p>
-                </article>
-              </Reveal>
-            ))}
-          </div>
-          <div className="milestones__cta">
-            <ButtonLink to="/about" size="lg" iconRight="arrow-right">
-              Read more of our story
-            </ButtonLink>
-          </div>
-        </div>
-      </section>
+      <FaqSection
+        eyebrow="Before you ask"
+        title="Good to know"
+        description="The questions every new family asks — answered straight."
+      />
 
-      <section className="section section--tinted">
-        <div className="container">
-          <div className="banner-cta">
-            <div className="banner-cta__copy">
-              <p className="type-eyebrow">Seasonal &amp; festive</p>
-              <h2>Get 10% off your first order</h2>
-              <p>Sign up for recipes, festival releases and members-only offers this festive season. Unsubscribe anytime.</p>
-            </div>
-            <NewsletterForm onSubscribe={handleSubscribe} />
-          </div>
-        </div>
-      </section>
+      {festiveActive && <FestiveSection />}
+
+      <FinalCall onSubscribe={handleSubscribe} />
     </>
   )
 }
 
-function Hero({ announcement }: { announcement: string }) {
+/* ------------------------------------------------------------------ Hero strip */
+
+function MarqueeBand() {
   return (
-    <section className="hero">
-      <div className="hero__bg" aria-hidden="true">
-        <span className="hero__bg-sphere hero__bg-sphere--gold" />
-        <span className="hero__bg-sphere hero__bg-sphere--olive" />
-        <span className="hero__bg-wheel" />
-        <span className="hero__bg-ring hero__bg-ring--a" />
-        <span className="hero__bg-ring hero__bg-ring--b" />
-      </div>
-      <div className="hero__inner container">
-        <div className="hero__copy">
-          <Badge tone="accent" dot>
-            {announcement}
-          </Badge>
-          <h1 className="hero__title">
-            Traditional Indian goodness
-            <span className="text-accent"> grown the slow way</span>
-          </h1>
-          <p className="hero__lead">{SITE.description}</p>
-          <div className="hero__actions">
-            <ButtonLink to="/shop" size="lg" iconRight="arrow-right">
-              Shop now
-            </ButtonLink>
-            <ButtonLink to="/shop" variant="outline" size="lg" icon="leaf">
-              Explore products
-            </ButtonLink>
-          </div>
-          <div className="hero__perks">
-            {TRUST_BADGES.slice(0, 3).map((badge, index) => (
-              <span key={badge.title} className="chip chip--ghost">
-                <Icon name={TRUST_ICONS[index]} size={15} />
-                {badge.title}
+    <div className="marquee" aria-hidden="true">
+      <div className="marquee__track">
+        {[0, 1].map((copy) => (
+          <div key={copy} className="marquee__group">
+            {MARQUEE_WORDS.map((word) => (
+              <span key={word} className="marquee__item">
+                {word}
+                <Icon name="leaf" size={14} />
               </span>
             ))}
           </div>
-        </div>
-        <div className="hero__media" aria-hidden="true">
-          <div className="hero__plate">
-            <div className="hero__plate-glow" />
-            <div className="hero__plate-laddu is-1" />
-            <div className="hero__plate-laddu is-2" />
-            <div className="hero__plate-laddu is-3" />
-            <span className="hero__caption">Slow-made · Small-batch</span>
-          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------ Brand statement */
+
+function BrandStatement() {
+  return (
+    <section className="section statement" aria-label="Our belief">
+      <div className="container statement__inner">
+        <Reveal variant="fade">
+          <p className="type-eyebrow statement__eyebrow">Why we exist</p>
+        </Reveal>
+        <Reveal variant="up" delay={80}>
+          <h2 className="statement__title">
+            Food with <em>a story.</em>
+          </h2>
+        </Reveal>
+        <Reveal variant="up" delay={160}>
+          <p className="statement__copy">
+            Our food begins with carefully selected single-origin ingredients, three generations of
+            traditional knowledge, and a stubborn commitment to making everyday nourishment better.
+            Never faster. Never easier. Always better.
+          </p>
+        </Reveal>
+        <Reveal variant="up" delay={240}>
+          <dl className="statement__facts">
+            <div>
+              <dt>40+</dt>
+              <dd>partner organic farms</dd>
+            </div>
+            <div>
+              <dt>3</dt>
+              <dd>generations of recipes</dd>
+            </div>
+            <div>
+              <dt>48h</dt>
+              <dd>farm-fresh dispatch</dd>
+            </div>
+          </dl>
+        </Reveal>
+      </div>
+    </section>
+  )
+}
+
+/* -------------------------------------------------------- What makes us different */
+
+function Philosophy({ images }: { images: string[] }) {
+  return (
+    <section className="section philosophy" aria-label="What makes Vedhi Foods different">
+      <div className="container">
+        <SectionHeader
+          eyebrow="What makes it different"
+          title="Honest food, four ways"
+          description="Everything we make answers to the same four standards — not as slogans, as daily practice."
+          align="center"
+        />
+        <ol className="principles">
+          {PRINCIPLES.map((principle, index) => (
+            <Reveal key={principle.n} as="li" delay={staggerDelay(index, 70)}>
+              <article className="principle">
+                <span className="principle__num" aria-hidden="true">
+                  {principle.n}
+                </span>
+                <div className="principle__copy">
+                  <h3 className="principle__title">
+                    <Icon name={principle.icon} size={18} /> {principle.title}
+                  </h3>
+                  <p className="principle__text">{principle.copy}</p>
+                </div>
+                {images[index] && (
+                  <img src={images[index]} alt="" loading="lazy" className="principle__img" />
+                )}
+              </article>
+            </Reveal>
+          ))}
+        </ol>
+      </div>
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------ Ingredient journey */
+
+function IngredientJourney() {
+  return (
+    <section className="section section--tinted journey-sec" id="journey" aria-label="From soil to your table">
+      <div className="container">
+        <SectionHeader
+          eyebrow="The journey"
+          title="From soil to your table"
+          description="Four honest steps between a single farm and your family's meal."
+          align="center"
+        />
+        <Reveal variant="up" className="journey">
+          <ol className="journey__track">
+            {JOURNEY.map((stage, index) => (
+              <li key={stage.title} className="journey__stage">
+                <span className="journey__node" aria-hidden="true">
+                  <Icon name={stage.icon} size={20} />
+                </span>
+                <p className="journey__step">Step {String(index + 1).padStart(2, '0')}</p>
+                <h3>{stage.title}</h3>
+                <p className="journey__copy">{stage.copy}</p>
+              </li>
+            ))}
+            <span className="journey__line" aria-hidden="true" />
+          </ol>
+        </Reveal>
+      </div>
+    </section>
+  )
+}
+
+/* --------------------------------------------------------------- Brand story teaser */
+
+function StoryTeaser({ image }: { image: string }) {
+  return (
+    <section className="section story-teaser" id="story">
+      <div className="container story-teaser__inner">
+        <Reveal variant="right" className="story-teaser__media-wrap">
+          <img src={image} alt="Heritage grains from native seed lines" loading="lazy" className="story-teaser__media" />
+        </Reveal>
+        <div className="story-teaser__copy">
+          <SectionHeader
+            eyebrow="Our story"
+            title="From a family kitchen, since 2009"
+            description="A village-market stall grew into a small-batch mill. The recipes, the sourcing and the standards never changed."
+            align="left"
+          />
+          <ul className="story-teaser__milestones">
+            {COMPANY_MILESTONES.slice(0, 2).map((milestone) => (
+              <li key={milestone.year}>
+                <span className="story-teaser__year">{milestone.year}</span>
+                <span>
+                  <strong>{milestone.title}</strong>
+                  <span>{milestone.copy}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <ButtonLink to="/about" variant="outline" iconRight="arrow-right">
+            Read more of our story
+          </ButtonLink>
         </div>
       </div>
-      <div className="hero__grain" aria-hidden="true" />
+    </section>
+  )
+}
+
+/* ---------------------------------------------------------- Made for modern life */
+
+function MadeForModernLife({ image }: { image: string }) {
+  return (
+    <section className="section modern-sec" aria-label="Made for modern life">
+      <div className="container modern">
+        <Reveal variant="left" className="modern__media-wrap">
+          <img src={image} alt="Ready-to-eat traditional meals in premium packaging" loading="lazy" className="modern__media" />
+          <span className="modern__stamp" aria-hidden="true">
+            Ready in minutes
+          </span>
+        </Reveal>
+        <div className="modern__copy">
+          <SectionHeader
+            eyebrow="Made for modern life"
+            title="Traditional roots. Modern convenience."
+            description="The taste of your grandmother's kitchen, without the four-hour lead time."
+            align="left"
+          />
+          <ul className="modern__list">
+            {MODERN_FEATURES.map((feature) => (
+              <li key={feature.title}>
+                <span className="modern__list-icon">
+                  <Icon name="check" size={15} />
+                </span>
+                <span>
+                  <strong>{feature.title}</strong>
+                  <span>{feature.copy}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <ButtonLink to="/categories" variant="outline" iconRight="arrow-right">
+            Explore the range
+          </ButtonLink>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------- Festive promo band */
+
+function FestiveSection() {
+  return (
+    <section className="section festive" aria-label="Festive promotion">
+      <div className="container festive__inner">
+        <div className="festive__copy">
+          <p className="type-eyebrow festive__eyebrow">Festive goodness · Limited time</p>
+          <h2 className="festive__title">
+            Celebrate with a box of tradition.
+          </h2>
+          <p className="festive__desc">
+            15% off festive gifting hampers until 31 October. Use <code className="festive__code">FESTIVE15</code> at checkout.
+          </p>
+          <div className="festive__actions">
+            <ButtonLink to="/shop" size="lg" iconRight="arrow-right">
+              Shop the festive box
+            </ButtonLink>
+          </div>
+        </div>
+        <div className="festive__seal" aria-hidden="true">
+          <span className="festive__seal-ring">
+            <span className="festive__seal-code">FESTIVE15</span>
+            <span className="festive__seal-save">15% off</span>
+          </span>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------------- Final call */
+
+function FinalCall({ onSubscribe }: { onSubscribe: (email: string) => Promise<void> }) {
+  return (
+    <section className="section finale" aria-label="Bring something good to your table">
+      <div className="container finale__inner">
+        <Reveal variant="scale">
+          <h2 className="finale__title">
+            Bring something <em>good</em> to your table.
+          </h2>
+        </Reveal>
+        <p className="finale__lead">
+          Explore the collection or hear the story first — either way, it starts with real food,
+          grown the slow way.
+        </p>
+        <div className="finale__actions">
+          <ButtonLink to="/shop" size="lg" iconRight="arrow-right">
+            Explore the collection
+          </ButtonLink>
+          <ButtonLink to="/about" variant="outline" size="lg" icon="leaf">
+            Discover our story
+          </ButtonLink>
+        </div>
+        <NewsletterForm onSubscribe={onSubscribe} />
+      </div>
     </section>
   )
 }
@@ -369,7 +503,7 @@ function NewsletterForm({ onSubscribe }: { onSubscribe: (email: string) => Promi
   }
 
   return (
-    <form className="newsletter" onSubmit={submit}>
+    <form className="newsletter finale__newsletter" onSubmit={submit}>
       <label className="sr-only" htmlFor="newsletter-email">
         Email address
       </label>
@@ -377,7 +511,7 @@ function NewsletterForm({ onSubscribe }: { onSubscribe: (email: string) => Promi
         id="newsletter-email"
         type="email"
         required
-        placeholder="you@example.com"
+        placeholder="you@example.com — recipes, releases & offers"
         value={email}
         onChange={(event) => setEmail(event.target.value)}
       />

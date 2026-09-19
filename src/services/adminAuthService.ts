@@ -148,6 +148,12 @@ export const adminAuthService = {
     if (current !== this.DEMO_PASSWORD) {
       throw new ServiceError('BAD_REQUEST', 'Current password is incorrect.')
     }
+    if (next === current) {
+      throw new ServiceError('BAD_REQUEST', 'New password must be different from the current one.')
+    }
+    if (next.length < 8) {
+      throw new ServiceError('BAD_REQUEST', 'New password must be at least 8 characters.')
+    }
     adminStore.log({
       actor: session.name,
       actorRole: session.role,

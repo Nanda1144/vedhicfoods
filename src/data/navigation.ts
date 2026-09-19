@@ -62,8 +62,5 @@ export interface AccountMenuEntry {
 }
 
 export const ACCOUNT_MENU: AccountMenuEntry[] = [
-  { label: 'Track an order', description: 'Order status & delivery', href: '/support' },
-  { label: 'Invoices', description: 'Download GST invoices', href: '/support' },
-  { label: 'FAQs & help', description: 'Shipping, returns & more', href: '/faq' },
   { label: 'Admin', description: 'Partner & staff login', href: '/admin/login' },
 ]

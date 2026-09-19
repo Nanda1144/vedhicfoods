@@ -2,7 +2,7 @@
   "name": "vedhifoods",
   "version": "0.0.0",
   "private": true,
-  "description": "This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.",
+  "description": "Vedhi Foods — a premium organic & traditional Indian ready-to-eat food e-commerce prototype. Immersive, editorial storefront built with React, TypeScript and Vite.",
   "type": "module",
   "main": "index.js",
   "scripts": {
@@ -24,5 +24,15 @@
     "oxlint": "^1.81.0",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nanda1144/vedhicfoods.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Nanda1144/vedhicfoods/issues"
+  },
+  "homepage": "https://github.com/Nanda1144/vedhicfoods#readme"
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { cn } from '@/utils/cn'
 import { formatCurrency } from '@/utils/format'
@@ -18,15 +18,28 @@ interface ProductCardProps {
   onAdd?: ((product: Product) => void) | null
 }
 
+type AddPhase = 'idle' | 'busy' | 'done'
+
 export function ProductCard({ product, priority = false, className, onAdd }: ProductCardProps) {
   const { add } = useCart()
   const [quickView, setQuickView] = useState(false)
+  const [phase, setPhase] = useState<AddPhase>('idle')
+  const timers = useRef<number[]>([])
+
+  useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), [])
+
   const badges = badgesFor(product)
   const status = stockStatus(product.stock)
   const category = productService.category(product.categorySlug)
 
   const handleAdd = () => {
+    if (phase !== 'idle') return
     if (onAdd === null) return
+    setPhase('busy')
+    timers.current.push(
+      window.setTimeout(() => setPhase('done'), 600),
+      window.setTimeout(() => setPhase('idle'), 2000),
+    )
     if (onAdd) onAdd(product)
     else add(product, 1)
   }
@@ -38,13 +51,17 @@ export function ProductCard({ product, priority = false, className, onAdd }: Pro
           <SmartImage
             src={product.images[0] ?? ''}
             alt={product.name}
-            aspect="portrait"
-            ratio="4 / 5"
+            ratio="1 / 1"
             priority={priority}
             seed={product.slug}
             className="product-card__image"
           />
         </Link>
+
+        <p className="product-card__media-caption">
+          <Icon name="leaf" size={13} />
+          {product.unit} · {product.netWeight} g
+        </p>
 
         {badges.length > 0 && (
           <div className="product-card__badges">
@@ -100,9 +117,17 @@ export function ProductCard({ product, priority = false, className, onAdd }: Pro
             <span className="btn__label">Notify me</span>
           </button>
         ) : (
-          <button type="button" className="btn btn--primary btn--md product-card__cta" onClick={handleAdd}>
-            <Icon name="cart" size={18} />
-            <span className="btn__label">Add · {formatCurrency(product.price)}</span>
+          <button
+            type="button"
+            className={cn('btn btn--primary btn--md product-card__cta', phase !== 'idle' && `is-${phase}`)}
+            onClick={handleAdd}
+            disabled={phase !== 'idle'}
+            aria-live="polite"
+          >
+            <Icon name={phase === 'done' ? 'check' : 'cart'} size={18} />
+            <span className="btn__label">
+              {phase === 'busy' ? 'Adding…' : phase === 'done' ? 'Added ✓' : `Add · ${formatCurrency(product.price)}`}
+            </span>
           </button>
         )}
       </div>

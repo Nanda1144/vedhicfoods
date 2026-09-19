@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { useCart } from '@/context'
+import { useCart, useSettings } from '@/context'
 import { formatCurrency } from '@/utils/format'
 import { Icon, Drawer, Button, QuantitySelector, EmptyState } from '../common'
 
@@ -11,6 +11,7 @@ interface CartDrawerProps {
 
 export function CartDrawer({ open, onClose }: CartDrawerProps) {
   const { items, totals, updateQuantity, remove, coupon, applyCoupon, removeCoupon } = useCart()
+  const { settings } = useSettings()
   const navigate = useNavigate()
   const location = useLocation()
   const [couponInput, setCouponInput] = useState('')
@@ -67,6 +68,7 @@ export function CartDrawer({ open, onClose }: CartDrawerProps) {
         </div>
       ) : (
         <>
+          <FreeShippingProgress subtotal={totals.subtotal} threshold={settings.freeShippingThreshold} />
           <ul className="cart-drawer__lines">
             {items.map((item) => (
               <li key={item.id} className="cart-line">
@@ -176,5 +178,32 @@ function ButtonLinkTo({ onClose }: { onClose: () => void }) {
     <Link to="/shop" onClick={onClose} className="btn btn--primary btn--md">
       <span className="btn__label">Shop now</span>
     </Link>
+  )
+}
+
+/* -------------------------------------------------------- Free shipping nudger */
+
+function FreeShippingProgress({ subtotal, threshold }: { subtotal: number; threshold: number }) {
+  const remaining = Math.max(0, threshold - subtotal)
+  const percent = Math.min(100, (subtotal / Math.max(1, threshold)) * 100)
+  const unlocked = remaining === 0
+
+  return (
+    <div className="ship-progress" aria-live="polite">
+      <p className="ship-progress__label">
+        {unlocked ? (
+          <>
+            <Icon name="truck" size={15} /> Free shipping unlocked — you've earned it
+          </>
+        ) : (
+          <>
+            <Icon name="truck" size={15} /> Add <strong>{formatCurrency(remaining)}</strong> more for free shipping
+          </>
+        )}
+      </p>
+      <div className="ship-progress__track" role="progressbar" aria-valuenow={Math.round(percent)} aria-valuemin={0} aria-valuemax={100} aria-label="Free shipping progress">
+        <span className={unlocked ? 'is-full' : undefined} style={{ width: `${percent}%` }} />
+      </div>
+    </div>
   )
 }

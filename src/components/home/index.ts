@@ -1,1 +1,6 @@
 export { Testimonials } from './Testimonials'
+export { ImmerseHero } from './Hero'
+export type { HeroIngredient } from './Hero'
+export { ProductShowcase } from './Showcase'
+export { ScrollRail } from './ScrollRail'
+export { FaqSection } from './FaqSection'

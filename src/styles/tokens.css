@@ -141,6 +141,8 @@
   --font-display: 'Cormorant Garamond', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
   --font-body: 'Outfit', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Consolas, monospace;
+  /* Numbers/figures — classic Times New Roman wherever figures appear. */
+  --font-numeral: 'Times New Roman', 'Times', 'Liberation Serif', Georgia, serif;
 
   --weight-light: 300;
   --weight-regular: 400;

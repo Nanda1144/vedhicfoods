@@ -10,7 +10,7 @@ import { Field, Input, Switch, Textarea } from '@/components/common/form'
 
 export function AdminSettingsPage() {
   const { settings, loading, persist } = useAdminSettings()
-  const { session, can } = useAdminAuth()
+  const { can } = useAdminAuth()
   const { push } = useToast()
   const [form, setForm] = useState<WebsiteSettings | null>(settings)
   const [saving, setSaving] = useState(false)

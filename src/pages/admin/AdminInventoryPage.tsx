@@ -135,6 +135,70 @@ export function AdminInventoryPage() {
     },
   ]
 
+  interface ReorderAlert {
+    productId: string
+    name: string
+    sku: string
+    image: string
+    stock: number
+    reorderLevel: number
+  }
+
+  const reorderColumns: Array<Column<ReorderAlert>> = [
+    {
+      key: 'product',
+      header: 'Product',
+      render: (alert) => (
+        <span className="admin-product-cell">
+          <img src={alert.image} alt="" className="admin-product-cell__thumb" loading="lazy" />
+          <span>
+            <strong>{alert.name}</strong>
+            <span className="type-caption">{alert.sku}</span>
+          </span>
+        </span>
+      ),
+    },
+    {
+      key: 'stock',
+      header: 'Stock',
+      align: 'right',
+      render: (alert) => <StatusPill status={alert.stock <= 0 ? 'out' : 'low'} label={`${alert.stock} left`} />,
+    },
+    {
+      key: 'level',
+      header: 'Reorder level',
+      align: 'right',
+      render: (alert) => <strong>{alert.reorderLevel}</strong>,
+    },
+    {
+      key: 'suggested',
+      header: 'Suggested qty',
+      align: 'right',
+      sortValue: (alert) => Math.max(alert.reorderLevel * 4 - alert.stock, 0),
+      render: (alert) => <strong>{Math.max(alert.reorderLevel * 4 - alert.stock, 0)}</strong>,
+    },
+    {
+      key: 'actions',
+      header: '',
+      align: 'right',
+      render: (alert) =>
+        can('inventory:write') ? (
+          <Button
+            size="sm"
+            variant="outline"
+            icon="plus"
+            onClick={() => {
+              const product = rows.find((candidate) => candidate.id === alert.productId)
+              setAdjusting(product ?? null)
+              setDelta(product ? String(Math.max(alert.reorderLevel * 4 - product.stock, 0)) : '0')
+            }}
+          >
+            Restock
+          </Button>
+        ) : null,
+    },
+  ]
+
   return (
     <>
       <AdminPageHeader
@@ -188,40 +252,22 @@ export function AdminInventoryPage() {
       <section className="admin-card">
         <header className="admin-card__head">
           <h2>Reorder suggestions</h2>
-          <span className="admin-card__hint">{alerts.data?.length ?? 0} items</span>
+          <span className="admin-card__hint">{alerts.data?.length ?? 0} items at or below reorder level</span>
         </header>
-        <ul className="categories-list">
-          {alerts.loading &&
-            Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} style={{ width: '100%', height: 44 }} />)}
-          {(alerts.data ?? []).map((alert) => (
-            <li key={alert.productId} className="admin-product-cell" style={{ justifyContent: 'space-between' }}>
-              <span className="admin-product-cell">
-                <img src={alert.image ?? ''} alt="" className="admin-product-cell__thumb" loading="lazy" />
-                <span>
-                  <strong>{alert.name}</strong>
-                  <span className="type-caption">{alert.sku}</span>
-                </span>
-              </span>
-              <span className="row" style={{ gap: 12 }}>
-                <StatusPill status={alert.stock <= 0 ? 'out' : 'low'} label={`${alert.stock} left`} />
-                {can('inventory:write') && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    icon="plus"
-                    onClick={() => {
-                      const product = rows.find((candidate) => candidate.id === alert.productId)
-                      setAdjusting(product ?? null)
-                      setDelta(product ? String(Math.max(alert.reorderLevel * 4 - product.stock, 0)) : '0')
-                    }}
-                  >
-                    Restock
-                  </Button>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
+        {alerts.loading ? (
+          <div className="stack stack-2">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Skeleton key={index} style={{ width: '100%', height: 48 }} />
+            ))}
+          </div>
+        ) : (
+          <DataTable
+            columns={reorderColumns}
+            rows={alerts.data ?? []}
+            rowKey={(alert) => alert.productId}
+            caption="Reorder suggestions"
+          />
+        )}
       </section>
 
       {adjusting && (

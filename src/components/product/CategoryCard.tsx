@@ -5,13 +5,15 @@ import { SmartImage, Icon } from '../common'
 interface CategoryCardProps {
   category: Category
   featured?: boolean
+  /** Reveal the category story on hover (editorial discovery grid). */
+  showDescription?: boolean
 }
 
-export function CategoryCard({ category, featured = false }: CategoryCardProps) {
+export function CategoryCard({ category, featured = false, showDescription = false }: CategoryCardProps) {
   return (
     <Link
       to={`/shop?category=${category.slug}`}
-      className={`category-card ${featured ? 'category-card--featured' : ''}`.trim()}
+      className={`category-card ${featured ? 'category-card--featured' : ''} ${showDescription ? 'category-card--story' : ''}`.trim()}
       style={{ '--cat-accent': category.accent } as React.CSSProperties}
     >
       <SmartImage
@@ -26,6 +28,7 @@ export function CategoryCard({ category, featured = false }: CategoryCardProps) 
       <span className="category-card__body">
         <span className="category-card__tagline">{category.tagline}</span>
         <span className="category-card__name">{category.name}</span>
+        {showDescription && <span className="category-card__desc">{category.description}</span>}
         <span className="category-card__cta">
           Explore <Icon name="arrow-right" size={15} />
         </span>

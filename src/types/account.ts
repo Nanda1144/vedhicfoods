@@ -10,6 +10,8 @@ export interface Customer {
   name: string
   email: string
   phone: string
+  /** Profile photo URL used in admin lists (falls back to initials). */
+  avatar?: string
   status: CustomerStatus
   addresses: Address[]
   orderCount: number
@@ -86,8 +88,15 @@ export interface StaffMember {
   /** Granular permission overrides. When empty, `role.permissions` applies. */
   permissions?: Permission[]
   employeeId?: string
+  /** Staff profile photo — admin uploads it when creating the login. */
+  avatar?: string
   createdAt: string
   lastActiveAt?: string
+  /** Prototype only — never store plain-text passwords in production.
+   *  When set, this is the account's own password (admin assigns it at
+   *  creation); the staff member then signs in with their work email.
+   *  In production this is a server-side hash + emailed activation link. */
+  password?: string
   /** Prototype only — never store plain-text passwords in production. */
   passwordHint?: string
 }
@@ -164,6 +173,8 @@ export interface WebsiteSettings {
   taxRate: number
   announcement: string
   announcementActive: boolean
+  /** Prototype switch for the seasonal "Festive goodness" front section. */
+  promotionActive?: boolean
   socials: SocialLink[]
   businessHours: string
 }

@@ -42,6 +42,7 @@ export const CUSTOMERS: Customer[] = CUSTOMER_SEED.map(([name, email, phone, cit
   name,
   email,
   phone,
+  avatar: `https://i.pravatar.cc/96?img=${(i % 70) + 1}`,
   status: i === 8 ? 'blocked' : i === 6 ? 'inactive' : 'active',
   addresses: [
     {
@@ -437,12 +438,12 @@ export const ROLES: Role[] = [
 ]
 
 export const STAFF: StaffMember[] = [
-  { id: 'stf-001', name: 'Vedhi Krishnan', email: 'vedhi@vedhifoods.example', phone: '9845000001', role: 'owner', employeeId: 'EMP-001', status: 'active', lastActiveAt: new Date(2026, 8, 17, 9, 12).toISOString(), createdAt: new Date(2024, 0, 8).toISOString() },
-  { id: 'stf-002', name: 'Anita Sharma', email: 'anita@vedhifoods.example', phone: '9845000002', role: 'manager', employeeId: 'EMP-002', status: 'active', lastActiveAt: new Date(2026, 8, 17, 8, 40).toISOString(), createdAt: new Date(2024, 2, 14).toISOString() },
-  { id: 'stf-003', name: 'Rohit Nambiar', email: 'rohit@vedhifoods.example', phone: '9845000003', role: 'inventory', employeeId: 'EMP-003', status: 'active', lastActiveAt: new Date(2026, 8, 16, 18, 5).toISOString(), createdAt: new Date(2024, 6, 2).toISOString() },
-  { id: 'stf-004', name: 'Fatima Sheikh', email: 'fatima@vedhifoods.example', phone: '9845000004', role: 'support', employeeId: 'EMP-004', status: 'active', lastActiveAt: new Date(2026, 8, 17, 10, 2).toISOString(), createdAt: new Date(2025, 1, 20).toISOString() },
-  { id: 'stf-005', name: 'Gaurav Patel', email: 'gaurav@vedhifoods.example', phone: '9845000005', role: 'viewer', employeeId: 'EMP-005', status: 'invited', createdAt: new Date(2026, 7, 30).toISOString() },
-  { id: 'stf-006', name: 'Deepa Menon', email: 'deepa@vedhifoods.example', phone: '9845000006', role: 'admin', employeeId: 'EMP-006', status: 'suspended', lastActiveAt: new Date(2026, 5, 11, 14, 22).toISOString(), createdAt: new Date(2024, 8, 5).toISOString() },
+  { id: 'stf-001', name: 'Vedhi Krishnan', email: 'vedhi@vedhifoods.example', phone: '9845000001', role: 'owner', employeeId: 'EMP-001', avatar: 'https://i.pravatar.cc/96?img=12', status: 'active', lastActiveAt: new Date(2026, 8, 17, 9, 12).toISOString(), createdAt: new Date(2024, 0, 8).toISOString() },
+  { id: 'stf-002', name: 'Anita Sharma', email: 'anita@vedhifoods.example', phone: '9845000002', role: 'manager', employeeId: 'EMP-002', avatar: 'https://i.pravatar.cc/96?img=47', status: 'active', lastActiveAt: new Date(2026, 8, 17, 8, 40).toISOString(), createdAt: new Date(2024, 2, 14).toISOString() },
+  { id: 'stf-003', name: 'Rohit Nambiar', email: 'rohit@vedhifoods.example', phone: '9845000003', role: 'inventory', employeeId: 'EMP-003', avatar: 'https://i.pravatar.cc/96?img=68', status: 'active', lastActiveAt: new Date(2026, 8, 16, 18, 5).toISOString(), createdAt: new Date(2024, 6, 2).toISOString() },
+  { id: 'stf-004', name: 'Fatima Sheikh', email: 'fatima@vedhifoods.example', phone: '9845000004', role: 'support', employeeId: 'EMP-004', avatar: 'https://i.pravatar.cc/96?img=44', status: 'active', lastActiveAt: new Date(2026, 8, 17, 10, 2).toISOString(), createdAt: new Date(2025, 1, 20).toISOString() },
+  { id: 'stf-005', name: 'Gaurav Patel', email: 'gaurav@vedhifoods.example', phone: '9845000005', role: 'viewer', employeeId: 'EMP-005', avatar: 'https://i.pravatar.cc/96?img=5', status: 'invited', createdAt: new Date(2026, 7, 30).toISOString() },
+  { id: 'stf-006', name: 'Deepa Menon', email: 'deepa@vedhifoods.example', phone: '9845000006', role: 'admin', employeeId: 'EMP-006', avatar: 'https://i.pravatar.cc/96?img=32', status: 'suspended', lastActiveAt: new Date(2026, 5, 11, 14, 22).toISOString(), createdAt: new Date(2024, 8, 5).toISOString() },
 ]
 
 /* --------------------------------------------------------- Support tickets */

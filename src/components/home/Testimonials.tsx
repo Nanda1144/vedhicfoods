@@ -31,6 +31,12 @@ export function Testimonials({ items, loading = false, className }: Testimonials
         <figure key={item.id} className="testimonial-card">
           <Rating value={item.rating} size="sm" />
           <blockquote className="testimonial-card__quote">“{item.quote}”</blockquote>
+          {item.product && (
+            <p className="testimonial-card__product">
+              <Icon name="box" size={13} />
+              {item.product}
+            </p>
+          )}
           <figcaption className="testimonial-card__person">
             <span className="testimonial-card__avatar" aria-hidden="true">
               {item.avatarInitials}

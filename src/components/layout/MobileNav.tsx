@@ -58,6 +58,12 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
             ))}
           </ul>
         </nav>
+        <div className="mobile-nav__login">
+          <NavLink to="/admin/login" className="mobile-nav__login-link" onClick={onClose}>
+            <Icon name="user" size={18} />
+            Admin &amp; Staff Login
+          </NavLink>
+        </div>
         <div className="mobile-nav__categories">
           <p className="type-label">Shop by category</p>
           <ul>

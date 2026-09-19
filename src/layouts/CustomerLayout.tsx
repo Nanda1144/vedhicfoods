@@ -16,11 +16,10 @@ import { SkipLink } from './SkipLink'
 
 interface BottomNavProps {
   onOpenSearch: () => void
-  onOpenMenu: () => void
   onOpenCart: () => void
 }
 
-export function BottomNav({ onOpenSearch, onOpenMenu, onOpenCart }: BottomNavProps) {
+export function BottomNav({ onOpenSearch, onOpenCart }: BottomNavProps) {
   const { count } = useCart()
 
   return (
@@ -39,23 +38,23 @@ export function BottomNav({ onOpenSearch, onOpenMenu, onOpenCart }: BottomNavPro
           </NavLink>
         </li>
         <li>
-          <NavLink
-            to="/shop"
-            className={({ isActive }) => cn('bottom-nav__item', isActive && 'is-active')}
-          >
-            <span className="bottom-nav__icon">
-              <Icon name="grid" size={20} />
-            </span>
-            <span>Shop</span>
-          </NavLink>
-        </li>
-        <li>
           <button type="button" className="bottom-nav__item" aria-label="Search products" onClick={onOpenSearch}>
             <span className="bottom-nav__icon">
               <Icon name="search" size={20} />
             </span>
             <span>Search</span>
           </button>
+        </li>
+        <li>
+          <NavLink
+            to="/shop"
+            className={({ isActive }) => cn('bottom-nav__item bottom-nav__item--shop', isActive && 'is-active')}
+          >
+            <span className="bottom-nav__icon">
+              <Icon name="grid" size={20} />
+            </span>
+            <span>Shop</span>
+          </NavLink>
         </li>
         <li>
           <button type="button" className="bottom-nav__item" aria-label="Open shopping cart" onClick={onOpenCart}>
@@ -71,12 +70,12 @@ export function BottomNav({ onOpenSearch, onOpenMenu, onOpenCart }: BottomNavPro
           </button>
         </li>
         <li>
-          <button type="button" className="bottom-nav__item" aria-label="Open menu and account" onClick={onOpenMenu}>
+          <NavLink to="/contact" className="bottom-nav__item">
             <span className="bottom-nav__icon">
-              <Icon name="user" size={20} />
+              <Icon name="phone" size={20} />
             </span>
-            <span>Account</span>
-          </button>
+            <span>Contact</span>
+          </NavLink>
         </li>
       </ul>
     </nav>
@@ -124,7 +123,6 @@ export function CustomerLayout() {
       <MobileNav open={menuOpen} onClose={() => setMenuOpen(false)} />
       <BottomNav
         onOpenSearch={() => setSearchOpen(true)}
-        onOpenMenu={() => setMenuOpen(true)}
         onOpenCart={openCart}
       />
     </div>

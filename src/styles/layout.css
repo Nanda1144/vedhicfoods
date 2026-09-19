@@ -544,6 +544,42 @@
   color: var(--color-primary);
 }
 
+.mobile-nav__login {
+  padding: var(--space-2) var(--space-5) var(--space-1);
+  border-top: var(--border-subtle);
+}
+
+.mobile-nav__login-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--color-text-strong);
+  font-family: var(--font-display);
+  font-size: var(--text-h5);
+  text-decoration: none;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast),
+    padding-left var(--transition-fast);
+}
+
+.mobile-nav__login-link > svg {
+  transition: transform var(--transition-fast);
+}
+
+.mobile-nav__login-link:hover {
+  padding-left: calc(var(--space-3) + var(--space-2));
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.mobile-nav__login-link:hover > svg {
+  transform: translate(2px, -2px);
+}
+
 .mobile-nav__categories {
   padding: var(--space-5);
 }
@@ -638,6 +674,24 @@
   color: var(--color-primary);
 }
 
+.bottom-nav__item--shop {
+  color: var(--color-primary);
+}
+
+.bottom-nav__item--shop .bottom-nav__icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  color: var(--color-on-primary, #fff);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+.bottom-nav__item--shop.is-active .bottom-nav__icon {
+  background: var(--color-accent);
+  color: var(--color-on-accent, #fff);
+}
+
 .bottom-nav__icon {
   position: relative;
   display: grid;
@@ -673,10 +727,16 @@
     display: block;
   }
 
-  /* One nav control per breakpoint: the bottom bar replaces the header
-     hamburger on phones; the existing mobile drawer is opened from the bar. */
-  .navbar__menu-btn {
+  /* Reuse the bottom nav's Search and Cart instead of duplicating them in
+     the mobile header: the header keeps only hamburger + logo + brand name. */
+  .navbar__actions {
     display: none;
+  }
+
+  /* Mobile header: logo + brand name on the left, hamburger pinned right. */
+  .navbar__menu-btn {
+    order: 3;
+    margin-left: auto;
   }
 
   .site {

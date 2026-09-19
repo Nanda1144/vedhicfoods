@@ -1,11 +1,3 @@
-
-
-in the admin portal the number is must be in the time new romans and the text is must be inside of teh cards and tehir borders, in order status formate     
-  ┃  is below of the graph i need the  text. in the add new product i need one more option that is upload image of teh iteam. check the reorder suggestion       
-  ┃  align it is not in the proper formate make usre it is in teh standard formate. us ethe standared formate in the yop customer by lifestime spend the text    
-  ┃  and the image is must ne in the beside s of each other. in the staff management system the amdin can enter the staff emial id and the password by         
-  ┃  default the staff myust be used their email id to login, while craeting teh logins they need to upload their images. the admin whats to chnage the          
-  ┃  password at that time they get the email  to change/update the password  the  
 # Vedhi Foods
 
 > **From the soil. To your table.** — a premium organic & traditional Indian ready-to-eat food experience.

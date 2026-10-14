@@ -1,0 +1,88 @@
+{
+  "_README": [
+    "IAM policies for the Vedhic Foods backend.",
+    "",
+    "TWO ROLES, DIFFERENT PURPOSES - do not merge them:",
+    "  ExecutionRole  assumed by the ECS AGENT. Needs to pull the image and read",
+    "                 secrets. It is NOT available to application code.",
+    "  TaskRole       assumed by the APPLICATION at runtime. Needs S3 and SES.",
+    "                 It deliberately has NO secretsmanager permission, because",
+    "                 secrets arrive through ECS `secrets` injection, which uses",
+    "                 the execution role. If the app can also read Secrets Manager",
+    "                 directly it can read every secret in the account.",
+    "",
+    "Both are scoped to specific resource ARNs. Nothing here uses \"*\" on a",
+    "resource, and no policy grants secretsmanager:GetSecretValue on \"*\" - that",
+    "single wildcard is equivalent to plaintext access to every secret you own."
+  ],
+
+  "ExecutionRole": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "PullImageFromECR",
+        "Effect": "Allow",
+        "Action": ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"],
+        "Resource": "*",
+        "_ResourceNote": "These four ECR actions are only supported on \"*\". They are read-only and grant no access to other repositories' contents."
+      },
+      {
+        "Sid": "ReadOwnSecrets",
+        "Effect": "Allow",
+        "Action": ["secretsmanager:GetSecretValue"],
+        "Resource": [
+          "arn:aws:secretsmanager:REPLACE_ME_REGION:REPLACE_ME_ACCOUNT_ID:secret:vedhicfoods/backend/*"
+        ]
+      },
+      {
+        "Sid": "WriteExecutionLogs",
+        "Effect": "Allow",
+        "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
+        "Resource": "arn:aws:logs:REPLACE_ME_REGION:REPLACE_ME_ACCOUNT_ID:log-group:vedhicfoods/*"
+      }
+    ]
+  },
+
+  "TaskRole": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ProductImagesAndDocuments",
+        "Effect": "Allow",
+        "Action": ["s3:PutObject", "s3:GetObject", "s3:DeleteObject"],
+        "Resource": [
+          "arn:aws:s3:::REPLACE_ME_S3_BUCKET/products/*",
+          "arn:aws:s3:::REPLACE_ME_S3_BUCKET/invoices/*"
+        ],
+        "_Note": "Prefix-scoped. The application never needs list-buckets, and s3:ListBucket on the bucket root is intentionally withheld."
+      },
+      {
+        "Sid": "PresignedUrlSigning",
+        "Effect": "Allow",
+        "Action": ["s3:PutObject", "s3:GetObject"],
+        "Resource": [
+          "arn:aws:s3:::REPLACE_ME_S3_BUCKET/products/*",
+          "arn:aws:s3:::REPLACE_ME_S3_BUCKET/invoices/*"
+        ],
+        "_Note": "SigV4 presigning is authorised by s3:PutObject/GetObject on the object ARN; there is no separate presign action."
+      },
+      {
+        "Sid": "TransactionalEmail",
+        "Effect": "Allow",
+        "Action": ["ses:SendEmail", "ses:SendRawEmail"],
+        "Resource": [
+          "arn:aws:ses:REPLACE_ME_REGION:REPLACE_ME_ACCOUNT_ID:identity/vedhicfoods.com",
+          "arn:aws:ses:REPLACE_ME_REGION:REPLACE_ME_ACCOUNT_ID:configuration-set/vedhicfoods"
+        ],
+        "_Note": "Scoped to the verified domain identity and the configuration set, not \"arn:aws:ses:*:*:*\". ses:SendEmail must be resource-scoped to the identity or configuration set - a wildcard here would allow sending as any identity in the account."
+      },
+      {
+        "Sid": "NoSecretAccessFromApp",
+        "Effect": "Deny",
+        "Action": ["secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue", "secretsmanager:DeleteSecret"],
+        "Resource": "*",
+        "_Note": "Explicit deny. The application receives its secrets through ECS injection and has no reason to call Secrets Manager. If the app is compromised, this denies it exfiltrating every other secret in the account via the SDK - the client is installed but unusable at runtime."
+      }
+    ]
+  }
+}

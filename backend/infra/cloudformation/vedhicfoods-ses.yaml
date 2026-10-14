@@ -1,0 +1,202 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >-
+  Vedhic Foods - SES sending domain, configuration set, and the SNS topic that
+  carries bounce/complaint events to the application webhook.
+
+# =============================================================================
+# WHAT THIS STACK PROVES AND WHY IT EXISTS
+#
+# The application sends transactional mail through SES. For that to work safely
+# three things must exist and be wired to each other:
+#
+#   1. A VERIFIED DOMAIN with DKIM. An unverified sender is rejected outright,
+#      and unsigned mail is far more likely to be filtered.
+#   2. A CONFIGURATION SET with reputation metrics enabled. Without it SES does
+#      not publish bounce/complaint rates, so the alarms in
+#      vedhicfoods-monitoring.yaml have no signal to read.
+#   3. AN SNS TOPIC that receives the bounce and complaint events, delivered to
+#      POST /api/v1/webhooks/email/sns. That handler maintains the suppression
+#      list so the account stops mailing addresses that hard-bounced or
+#      complained - the single most effective way to protect sending reputation.
+#
+# SES v1 and v2 note: configuration sets and their event destinations are shared
+# between the SES v1 and SES v2 APIs; the v2 SendEmail call the application uses
+# accepts the configuration set *name* created here. The domain identity is
+# created with the SES v2 resource because it exposes the DKIM tokens directly.
+#
+# This stack does NOT create reputation alarms; they live with the rest of the
+# alerting in vedhicfoods-monitoring.yaml so that all paging is defined in one
+# place. Add BounceRate/ComplaintRate alarms there once the topic host is known.
+# =============================================================================
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Domain }
+        Parameters: [DomainName, HostedZoneId, CreateDkimRecords]
+      - Label: { default: Sending configuration }
+        Parameters: [ConfigurationSetName, EventTopicName]
+
+Parameters:
+  DomainName:
+    Type: String
+    Description: >-
+      The sending domain, e.g. vedhicfoods.com. Must match the apex/registered
+      domain; SES derives the DKIM tokens from it.
+    AllowedPattern: '^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$'
+    ConstraintDescription: Must be a bare registered domain, not a URL.
+
+  HostedZoneId:
+    Type: String
+    Description: >-
+      Route 53 hosted zone id that serves the domain. Look it up with
+      `aws route53 list-hosted-zones-by-name --dns-name <domain>`. Only used
+      when CreateDkimRecords is true.
+
+  CreateDkimRecords:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >-
+      Create the three DKIM CNAME records in the hosted zone. Set false when DNS
+      is managed outside Route 53; the DKIM tokens are then emitted as stack
+      outputs so they can be added manually.
+
+  ConfigurationSetName:
+    Type: String
+    Default: vedhicfoods
+    Description: >-
+      Configuration set name. Must equal SES_CONFIGURATION_SET in the backend
+      environment (and the value in .env.production.example).
+
+  EventTopicName:
+    Type: String
+    Default: vedhicfoods-ses-events
+    Description: SNS topic that receives bounce and complaint events.
+
+Conditions:
+  CreateDkimRecordsCondition: !Equals [!Ref CreateDkimRecords, 'true']
+
+Resources:
+
+  # ---------------------------------------------------------------------------
+  # Sending configuration
+  # ---------------------------------------------------------------------------
+
+  ConfigurationSet:
+    Type: AWS::SES::ConfigurationSet
+    Properties:
+      Name: !Ref ConfigurationSetName
+      # Enables bounce/complaint *reputation metrics* (Reputation.BounceRate and
+      # Reputation.ComplaintRate in the AWS/SES namespace). Without this the
+      # reputation alarms have nothing to read.
+      ReputationOptions:
+        ReputationMetricsEnabled: true
+
+  # ---------------------------------------------------------------------------
+  # Event transport: SES -> SNS -> /api/v1/webhooks/email/sns
+  # ---------------------------------------------------------------------------
+
+  EventsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Ref EventTopicName
+      DisplayName: Vedhic Foods SES events (bounce/complaint)
+
+  # Only SES in THIS account may publish. The SourceAccount condition is what
+  # stops another account's SES from injecting events into the topic (and thus
+  # driving the suppression list).
+  EventsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref EventsTopic]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowSESPublishFromThisAccount
+            Effect: Allow
+            Principal: { Service: ses.amazonaws.com }
+            Action: sns:Publish
+            Resource: !Ref EventsTopic
+            Condition:
+              StringEquals:
+                AWS:SourceAccount: !Ref AWS::AccountId
+
+  ConfigurationSetEventDestination:
+    Type: AWS::SES::ConfigurationSetEventDestination
+    Properties:
+      ConfigurationSetName: !Ref ConfigurationSet
+      EventDestination:
+        Name: sns-bounce-complaint
+        Enabled: true
+        # DELIVERY is intentionally excluded: it is high volume and the
+        # application does not need a callback for every successful send. Add it
+        # only if delivery-latency metrics are introduced.
+        MatchingEventTypes: [BOUNCE, COMPLAINT]
+        SnsDestination:
+          TopicARN: !Ref EventsTopic
+
+  # ---------------------------------------------------------------------------
+  # Domain verification + DKIM
+  # ---------------------------------------------------------------------------
+
+  DomainIdentity:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: !Ref DomainName
+      # Publish opens/clicks/delivery events too; harmless when nothing consumes
+      # them and useful if engagement metrics are added later.
+      FeedbackAttributes:
+        EmailForwardingEnabled: false
+
+  # The three DKIM CNAMEs. SES generates the tokens on the identity; each CNAME
+  # is <token>._domainkey.<domain>.
+  DkimRecordSet:
+    Type: AWS::Route53::RecordSetGroup
+    Condition: CreateDkimRecordsCondition
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      RecordSets:
+        - Name: !Sub '${DomainIdentity.DkimDNSTokenName1}.'
+          Type: CNAME
+          TTL: '1800'
+          ResourceRecords: [!GetAtt DomainIdentity.DkimDNSTokenValue1]
+        - Name: !Sub '${DomainIdentity.DkimDNSTokenName2}.'
+          Type: CNAME
+          TTL: '1800'
+          ResourceRecords: [!GetAtt DomainIdentity.DkimDNSTokenValue2]
+        - Name: !Sub '${DomainIdentity.DkimDNSTokenName3}.'
+          Type: CNAME
+          TTL: '1800'
+          ResourceRecords: [!GetAtt DomainIdentity.DkimDNSTokenValue3]
+
+Outputs:
+  DomainIdentityArn:
+    Description: ARN of the verified sending identity. Use it in the TaskRole SES policy.
+    Value: !GetAtt DomainIdentity.EmailIdentity
+
+  ConfigurationSetName:
+    Description: >-
+      Set SES_CONFIGURATION_SET to this value in the backend environment.
+    Value: !Ref ConfigurationSet
+
+  EventsTopicArn:
+    Description: >-
+      Set SNS_EMAIL_TOPIC_ARN to this value so the webhook can reject messages
+      from any other topic. Subscribe this topic to the application webhook (or
+      to an HTTPS endpoint fronting it).
+    Value: !Ref EventsTopic
+
+  DkimToken1:
+    Condition: CreateDkimRecordsCondition
+    Description: DKIM CNAME target 1 (for reference; the record is created above).
+    Value: !GetAtt DomainIdentity.DkimDNSTokenValue1
+  DkimToken2:
+    Condition: CreateDkimRecordsCondition
+    Description: DKIM CNAME target 2.
+    Value: !GetAtt DomainIdentity.DkimDNSTokenValue2
+  DkimToken3:
+    Condition: CreateDkimRecordsCondition
+    Description: DKIM CNAME target 3.
+    Value: !GetAtt DomainIdentity.DkimDNSTokenValue3

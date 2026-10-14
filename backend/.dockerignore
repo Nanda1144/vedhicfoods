@@ -1,0 +1,16 @@
+node_modules
+dist
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+tests
+coverage
+*.log
+npm-debug.log*
+.DS_Store
+python_archive
+.venv
+instance
+uploads

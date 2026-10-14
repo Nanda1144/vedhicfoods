@@ -1,0 +1,182 @@
+/* ==========================================================================
+   Motion system — keyframes, reveal primitives & accessibility safeguards.
+   Only transform / opacity are animated for compositor-friendly performance.
+   ========================================================================== */
+
+@keyframes vf-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes vf-fade-up {
+  from { opacity: 0; transform: translate3d(0, 22px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes vf-fade-down {
+  from { opacity: 0; transform: translate3d(0, -16px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes vf-slide-in-right {
+  from { opacity: 0; transform: translate3d(24px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes vf-slide-in-left {
+  from { opacity: 0; transform: translate3d(-24px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes vf-scale-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes vf-pop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.14); }
+  100% { transform: scale(1); }
+}
+
+@keyframes vf-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes vf-shimmer {
+  from { background-position: -160% 0; }
+  to { background-position: 260% 0; }
+}
+
+@keyframes vf-float {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, -12px, 0); }
+}
+
+@keyframes vf-drawer-in-right {
+  from { transform: translate3d(100%, 0, 0); }
+  to { transform: translate3d(0, 0, 0); }
+}
+
+@keyframes vf-drawer-in-left {
+  from { transform: translate3d(-100%, 0, 0); }
+  to { transform: translate3d(0, 0, 0); }
+}
+
+@keyframes vf-modal-in {
+  from { opacity: 0; transform: translate3d(0, 12px, 0) scale(0.97); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes vf-toast-in {
+  from { opacity: 0; transform: translate3d(0, 16px, 0) scale(0.97); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes vf-toast-out {
+  to { opacity: 0; transform: translate3d(0, 8px, 0) scale(0.98); }
+}
+
+/* --- Announcement marquee & blink ---------------------------------------- */
+
+@keyframes vf-marquee {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-50%, 0, 0); }
+}
+
+@keyframes vf-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.3; }
+}
+
+/* --- Hero background machine ----------------------------------------------
+   Organic "field to table" scene: rolling grain wheel, breathing crop
+   spheres and slowly orbiting rings. Only used inside the hero.           */
+
+@keyframes vf-hero-roll {
+  from { transform: translate3d(-18vw, 0, 0) rotate(0deg); }
+  to { transform: translate3d(112vw, 0, 0) rotate(360deg); }
+}
+
+@keyframes vf-hero-zoom {
+  0% { transform: scale(0.86); }
+  50% { transform: scale(1.14); }
+  100% { transform: scale(0.86); }
+}
+
+/* --- Utility entrance classes -------------------------------------------- */
+
+.anim-fade-in { animation: vf-fade-in var(--duration-slow) var(--ease-out) both; }
+.anim-fade-up { animation: vf-fade-up var(--duration-slow) var(--ease-out) both; }
+.anim-scale-in { animation: vf-scale-in var(--duration-base) var(--ease-out) both; }
+.anim-slide-left { animation: vf-slide-in-left var(--duration-slow) var(--ease-out) both; }
+.anim-slide-right { animation: vf-slide-in-right var(--duration-slow) var(--ease-out) both; }
+
+.anim-delay-1 { animation-delay: 60ms; }
+.anim-delay-2 { animation-delay: 120ms; }
+.anim-delay-3 { animation-delay: 180ms; }
+.anim-delay-4 { animation-delay: 240ms; }
+.anim-delay-5 { animation-delay: 300ms; }
+.anim-delay-6 { animation-delay: 360ms; }
+
+.anim-float {
+  animation: vf-float 7s var(--ease-in-out) infinite;
+}
+
+/* --- Scroll reveal --------------------------------------------------------
+   Elements start hidden; the `is-visible` class is toggled by an
+   IntersectionObserver (see useReveal). Falls back to visible if JS is off.  */
+
+.reveal {
+  opacity: 0;
+  transform: translate3d(0, 26px, 0);
+  transition:
+    opacity var(--duration-slower) var(--ease-out),
+    transform var(--duration-slower) var(--ease-out);
+  transition-delay: var(--reveal-delay, 0ms);
+  will-change: opacity, transform;
+}
+
+.reveal--left { transform: translate3d(-32px, 0, 0); }
+.reveal--right { transform: translate3d(32px, 0, 0); }
+.reveal--scale { transform: scale(0.95); }
+.reveal--fade { transform: none; }
+
+.reveal.is-visible {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+  will-change: auto;
+}
+
+.no-js .reveal {
+  opacity: 1;
+  transform: none;
+}
+
+/* --- Page transition ------------------------------------------------------ */
+
+.page-transition {
+  animation: vf-fade-up 320ms var(--ease-out) both;
+}
+
+/* --- Reduced motion ------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

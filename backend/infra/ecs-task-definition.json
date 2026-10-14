@@ -1,0 +1,227 @@
+{
+  "_README": [
+    "ECS Fargate task definition for the Vedhic Foods backend.",
+    "",
+    "Every value written as REPLACE_ME must be substituted before registering this",
+    "task definition. `backend/infra/validate-task-definition.ps1` fails if any",
+    "REPLACE_ME marker survives, so a template cannot be deployed by accident.",
+    "",
+    "Substitutions:",
+    "  REPLACE_ME_ACCOUNT_ID       AWS account id (12 digits)",
+    "  REPLACE_ME_REGION          e.g. ap-south-1",
+    "  REPLACE_ME_EXECUTION_ROLE  role the ECS AGENT uses: ECR pull + secrets read",
+    "  REPLACE_ME_TASK_ROLE       role the APP runs as: S3 + SES + secrets read",
+"  REPLACE_ME_IMAGE           ECR image URI including the :tag",
+    "  REPLACE_ME_SECRET_ARN_*    ARNs of secrets created by infra/scripts/create-secrets.ps1",
+    "",
+    "Deliberately NOT templated: no secret VALUES appear here. Secrets are",
+    "referenced by ARN in the `secrets` block, so the JSON is safe to commit.",
+    "Every REPLACE_ME marker above is detected by",
+    "infra/validate-task-definition.ps1, which exits non-zero while any remain."
+  ],
+
+  "family": "vedhicfoods-backend",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "1024",
+
+  "_ARCHITECTURE_NOTE": [
+    "arm64 is roughly 20% cheaper per vCPU-hour on Fargate and this workload is",
+    "pure Node.js I/O with no native x86-only dependencies. Prisma ships a musl",
+    "arm64 query engine, and the Dockerfile builds on the same architecture, so no",
+    "emulation is involved. Switch to x86_64 only if a future native dependency",
+    "lacks an arm64 build."
+  ],
+  "runtimePlatform": {
+    "cpuArchitecture": "ARM64",
+    "operatingSystemFamily": "LINUX"
+  },
+
+  "executionRoleArn": "arn:aws:iam::REPLACE_ME_ACCOUNT_ID:role/REPLACE_ME_EXECUTION_ROLE",
+
+  "taskRoleArn": "arn:aws:iam::REPLACE_ME_ACCOUNT_ID:role/REPLACE_ME_TASK_ROLE",
+
+  "containerDefinitions": [
+    {
+      "name": "backend",
+      "image": "REPLACE_ME_IMAGE",
+      "essential": true,
+
+      "portMappings": [
+        {
+          "name": "http",
+          "containerPort": 5000,
+          "protocol": "tcp",
+          "appProtocol": "http"
+        }
+      ],
+
+      "_ENV_NOTE": [
+        "Only non-secret configuration lives in `environment`. Anything sensitive",
+        "belongs in the `secrets` block below.",
+        "",
+        "REDIS_URL is required: rate limiting fails the boot without it, because the",
+        "express-rate-limit default store is per-process and silently multiplies",
+        "every limit by the task count.",
+        "",
+        "TRUST_PROXY must be the number of proxies in front of the app. With an ALB",
+        "in awsvpc mode it is 1. Getting this wrong makes every request appear to",
+        "come from the proxy, which collapses per-IP rate limiting to a single",
+        "global bucket for all customers.",
+        "",
+        "FRONTEND_URL / ADMIN_FRONTEND_URL are the COMPLETE production CORS",
+        "allowlist. src/config/env.ts refuses to boot unless both are real https",
+        "origins that are not loopback or reserved names, and app.ts adds nothing",
+        "else in production. Keep this list in step with the storefront and admin",
+        "hostnames in the edge stack (infra/cloudformation/vedhicfoods-edge.yaml)."
+      ],
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "PORT", "value": "5000" },
+        { "name": "LOG_LEVEL", "value": "info" },
+        { "name": "AWS_REGION", "value": "REPLACE_ME_REGION" },
+        { "name": "TRUST_PROXY", "value": "1" },
+        { "name": "REDIS_URL", "value": "REPLACE_ME_REDIS_URL" },
+
+        { "name": "SHUTDOWN_GRACE_MS", "value": "25000" },
+        { "name": "REQUEST_TIMEOUT_MS", "value": "60000" },
+        { "name": "KEEP_ALIVE_TIMEOUT_MS", "value": "65000" },
+
+        { "name": "DATABASE_POOL_SIZE", "value": "5" },
+        { "name": "DATABASE_CONNECT_TIMEOUT_S", "value": "10" },
+        { "name": "DATABASE_SOCKET_TIMEOUT_S", "value": "30" },
+        { "name": "DATABASE_PGBOUNCER", "value": "true" },
+
+        { "name": "EMAIL_PROVIDER", "value": "ses" },
+        { "name": "SES_REGION", "value": "REPLACE_ME_REGION" },
+        { "name": "SES_SENDER_EMAIL", "value": "REPLACE_ME_SES_SENDER_EMAIL" },
+        { "name": "SES_SENDER_NAME", "value": "Vedhic Foods" },
+        { "name": "SES_CONFIGURATION_SET", "value": "vedhicfoods" },
+        { "name": "ADMIN_NOTIFICATION_EMAIL", "value": "REPLACE_ME_ADMIN_NOTIFICATION_EMAIL" },
+        { "name": "SNS_EMAIL_TOPIC_ARN", "value": "REPLACE_ME_SNS_EMAIL_TOPIC_ARN" },
+        { "name": "SNS_VERIFY_SIGNATURE", "value": "true" },
+
+        { "name": "AWS_S3_BUCKET", "value": "REPLACE_ME_S3_BUCKET" },
+        { "name": "AWS_SES_FROM_NAME", "value": "Vedhic Foods" },
+
+        { "name": "FRONTEND_URL", "value": "https://vedhicfoods.com" },
+        { "name": "ADMIN_FRONTEND_URL", "value": "https://admin.vedhicfoods.com" }
+      ],
+
+      "_SECRETS_NOTE": [
+        "Injected by the ECS agent at container start from Secrets Manager. Values",
+        "are never visible in `describe-task-definition`, only the ARNs are.",
+        "",
+        "DATABASE_URL must include `sslmode=require`. RDS refuses non-TLS",
+        "connections unless the instance parameter group allows otherwise, and an",
+        "unencrypted connection would expose credentials in transit.",
+        "",
+        "`dependsOn` guarantees the agent resolves every secret BEFORE starting the",
+        "container, so the app never boots against a half-populated environment."
+      ],
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "REPLACE_ME_SECRET_ARN_DATABASE_URL",
+          "dependsOn": [
+            { "name": "DATABASE_URL", "valueFrom": "REPLACE_ME_SECRET_ARN_DATABASE_URL" }
+          ]
+        },
+        {
+          "name": "JWT_SECRET",
+          "valueFrom": "REPLACE_ME_SECRET_ARN_JWT_SECRET",
+          "dependsOn": [
+            { "name": "JWT_SECRET", "valueFrom": "REPLACE_ME_SECRET_ARN_JWT_SECRET" }
+          ]
+        },
+        {
+          "name": "ENCRYPTION_KEY",
+          "valueFrom": "REPLACE_ME_SECRET_ARN_ENCRYPTION_KEY",
+          "dependsOn": [
+            { "name": "ENCRYPTION_KEY", "valueFrom": "REPLACE_ME_SECRET_ARN_ENCRYPTION_KEY" }
+          ]
+        },
+        {
+          "name": "RAZORPAY_KEY_ID",
+          "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_KEY_ID",
+          "dependsOn": [
+            { "name": "RAZORPAY_KEY_ID", "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_KEY_ID" }
+          ]
+        },
+        {
+          "name": "RAZORPAY_KEY_SECRET",
+          "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_KEY_SECRET",
+          "dependsOn": [
+            { "name": "RAZORPAY_KEY_SECRET", "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_KEY_SECRET" }
+          ]
+        },
+        {
+          "name": "RAZORPAY_WEBHOOK_SECRET",
+          "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_WEBHOOK_SECRET",
+          "dependsOn": [
+            { "name": "RAZORPAY_WEBHOOK_SECRET", "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_WEBHOOK_SECRET" }
+          ]
+        },
+        {
+          "name": "BREVO_API_KEY",
+          "valueFrom": "REPLACE_ME_SECRET_ARN_BREVO_API_KEY"
+        }
+      ],
+
+      "_HEALTHCHECK_NOTE": [
+        "Matches the Dockerfile HEALTHCHECK. `startPeriod` must exceed the time to",
+        "connect to PostgreSQL on a cold start, otherwise ECS kills tasks that were",
+        "about to become healthy.",
+        "The ALB target group should use /api/v1/health/ready instead, which also",
+        "checks the database."
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "node -e \"require('http').get({host:'127.0.0.1',port:5000,path:'/api/v1/health',timeout:4000},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 45
+      },
+
+      "_LOGS_NOTE": [
+        "The awslogs driver needs no CloudWatch agent. `pino` already writes",
+        "newline-delimited JSON to stdout in production (pino-pretty is only enabled",
+        "outside production), so log lines arrive as structured JSON and can be",
+        "queried with Logs Insights directly.",
+        "",
+        "`awslogs-stream-prefix` must be unique per container in the task.",
+        "REPLACE_ME must match the CloudWatch log group created by",
+        "infra/scripts/create-cloudwatch.ps1.",
+        "",
+        "`awslogs-create-group: true` is only a fallback: the execution role in",
+        "iam-policies.json grants no `logs:CreateLogGroup`, so if the group is",
+        "missing the agent's create call is denied. Run create-cloudwatch.ps1",
+        "before the first task starts."
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "REPLACE_ME_LOG_GROUP",
+          "awslogs-region": "REPLACE_ME_REGION",
+          "awslogs-stream-prefix": "backend",
+          "awslogs-create-group": "true",
+          "mode": "non-blocking"
+        }
+      },
+
+      "_RESOURCES_NOTE": [
+        "512 CPU / 1024 MB suits a Node service that is I/O bound on PostgreSQL and",
+        "S3. Raise memory before CPU: a V8 heap OOM under low CPU still shows up as",
+        "a memory-limit kill.",
+        "",
+        "DATABASE_POOL_SIZE (5) x max tasks must stay under the RDS instance's",
+        "max_connections. 5 x 6 tasks = 30, which fits a db.t4g.medium (approx 420)",
+        "with ample headroom for migrations and operator sessions."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,259 @@
+import { useMemo, useRef, useState } from 'react'
+import { adminService } from '@/services/adminService'
+import { useAdminAuth } from '@/context/AdminAuthContext'
+import { useAdminSettings } from './useAdminSettings'
+import { useAsync } from '@/hooks'
+import { useToast } from '@/context'
+import { AdminPageHeader, ImageUploadField } from '@/components/admin'
+import type { Product, WebsiteSettings } from '@/types'
+import { Button, Icon, Skeleton } from '@/components/common'
+import { Field, Input, Switch, Textarea } from '@/components/common/form'
+
+export function AdminSettingsPage() {
+  const { settings, loading, persist } = useAdminSettings()
+  const { can } = useAdminAuth()
+  const { push } = useToast()
+  const [form, setForm] = useState<WebsiteSettings | null>(settings)
+  const [saving, setSaving] = useState(false)
+
+  const brandQuery = useAsync(() => adminService.brand(), [])
+  const productsQuery = useAsync(() => adminService.products(), [])
+  const brand = brandQuery.data ?? null
+
+  const readImageFile = (file: File | undefined): Promise<string> =>
+    new Promise((resolve, reject) => {
+      if (!file) {
+        resolve('')
+        return
+      }
+      if (file.size > 1_500_000) {
+        reject(new Error('Keep the image under 1.5 MB.'))
+        return
+      }
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result ?? ''))
+      reader.onerror = () => reject(new Error('Could not read the file.'))
+      reader.readAsDataURL(file)
+    })
+
+  const applyImage = async (kind: 'logo' | 'product', id: string | null, value: string) => {
+    try {
+      if (kind === 'logo') {
+        await adminService.saveBrand({ logoUrl: value })
+        push({ title: 'Logo updated', description: 'The new logo is saved for header, footer and invoices.' })
+        await brandQuery.run()
+      } else if (id) {
+        const product = productsQuery.data?.find((candidate) => candidate.id === id)
+        if (!product) return
+        const images = product.images.slice()
+        images[0] = value
+        await adminService.updateProduct(id, { images })
+        push({ title: 'Image replaced', description: `${product.name} now uses the new image.` })
+        await productsQuery.run()
+      }
+    } catch (caught) {
+      push({
+        title: 'Could not replace image',
+        description: caught instanceof Error ? caught.message : 'Please try again.',
+        tone: 'danger',
+      })
+    }
+  }
+
+  const onProductFile = async (productId: string, file: File | undefined) => {
+    try {
+      const value = await readImageFile(file)
+      if (value) await applyImage('product', productId, value)
+    } catch (caught) {
+      push({
+        title: 'Could not replace image',
+        description: caught instanceof Error ? caught.message : 'Please try again.',
+        tone: 'danger',
+      })
+    }
+  }
+
+  const visible = form ?? settings
+
+  const update = <K extends keyof WebsiteSettings>(key: K, value: WebsiteSettings[K]) =>
+    setForm((current) => (current ? { ...current, [key]: value } : current))
+
+  const dirty = useMemo(() => settings && form && JSON.stringify(settings) !== JSON.stringify(form), [settings, form])
+
+  if (loading && !settings) {
+    return (
+      <>
+        <AdminPageHeader title="Website settings" description="Storefront basics, business info and notifications." />
+        <Skeleton style={{ width: '100%', height: 480 }} />
+      </>
+    )
+  }
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!visible) return
+    setSaving(true)
+    try {
+      await persist({
+        brandName: visible.brandName,
+        tagline: visible.tagline,
+        taxRate: Number(visible.taxRate),
+        gstin: visible.gstin,
+        freeShippingThreshold: Number(visible.freeShippingThreshold),
+        standardShippingFee: Number(visible.standardShippingFee),
+        announcement: visible.announcement,
+        announcementActive: visible.announcementActive,
+        businessHours: visible.businessHours,
+        supportEmail: visible.supportEmail,
+        supportPhone: visible.supportPhone,
+      })
+      push({ title: 'Settings saved', description: 'Storefront settings are up to date.' })
+    } catch (caught) {
+      push({ title: 'Could not save', description: caught instanceof Error ? caught.message : 'Please try again.', tone: 'danger' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <>
+      <AdminPageHeader title="Website settings" description="Storefront basics, business info and notifications." />
+
+      <form className="admin-form" onSubmit={submit} noValidate>
+        <section className="admin-card admin-form__section">
+          <p className="admin-form__section-title">Brand basics</p>
+          <div className="admin-form__grid">
+            <Field label="Business name">
+              <Input value={visible.brandName} onChange={(event) => update('brandName', event.target.value)} />
+            </Field>
+            <Field label="Tagline">
+              <Input value={visible.tagline} onChange={(event) => update('tagline', event.target.value)} />
+            </Field>
+            <Field label="GSTIN">
+              <Input value={visible.gstin} onChange={(event) => update('gstin', event.target.value)} placeholder="29ABCDE1234F1Z5" />
+            </Field>
+            <Field label="Currency" hint="Fixed to the INR storefront for now.">
+              <Input value="INR (₹)" disabled />
+            </Field>
+          </div>
+        </section>
+
+        <section className="admin-card admin-form__section">
+          <p className="admin-form__section-title">Orders & pricing</p>
+          <div className="admin-form__grid">
+            <Field label="Free shipping threshold (₹)">
+              <Input type="number" min="0" value={visible.freeShippingThreshold} onChange={(event) => update('freeShippingThreshold', Number(event.target.value))} />
+            </Field>
+            <Field label="Standard shipping fee (₹)">
+              <Input type="number" min="0" step="0.01" value={visible.standardShippingFee} onChange={(event) => update('standardShippingFee', Number(event.target.value))} />
+            </Field>
+            <Field label="Tax rate (%)">
+              <Input type="number" min="0" step="0.01" value={visible.taxRate} onChange={(event) => update('taxRate', Number(event.target.value))} />
+            </Field>
+          </div>
+        </section>
+
+        <section className="admin-card admin-form__section">
+          <p className="admin-form__section-title">Announcement strip</p>
+          <div className="row" style={{ gap: 12 }}>
+            <Switch label="Show announcement bar" checked={visible.announcementActive} onCheckedChange={(value) => update('announcementActive', value)} />
+          </div>
+          <Field label="Announcement text">
+            <Textarea rows={2} value={visible.announcement} onChange={(event) => update('announcement', event.target.value)} />
+          </Field>
+        </section>
+
+        <section className="admin-card admin-form__section">
+          <p className="admin-form__section-title">Operating hours</p>
+          <Field label="Business hours">
+            <Input value={visible.businessHours} onChange={(event) => update('businessHours', event.target.value)} placeholder="Mon–Sat, 9:00 AM – 6:00 PM" />
+          </Field>
+        </section>
+
+        <div className="admin-form__foot">
+          <Button variant="ghost" onClick={() => setForm(settings)} disabled={!dirty}>
+            Discard
+          </Button>
+          <Button type="submit" icon="check" loading={saving} disabled={!dirty}>
+            Save settings
+          </Button>
+        </div>
+      </form>
+
+      {(can('settings.update') || can('settings.update') || can('products.update')) && (
+        <section className="admin-card admin-form__section" id="media-images" style={{ scrollMarginTop: 24 }}>
+          <p className="admin-form__section-title">Media / site images</p>
+          <p className="admin-muted" style={{ margin: '0 0 var(--space-4)' }}>
+            Replace any image used across the site. Changes save immediately.
+          </p>
+
+          <div style={{ display: 'grid', gap: 'var(--space-4)' }}>
+            <div>
+              <p className="admin-form__section-subtitle">Site logo</p>
+              {can('settings.update') && (
+                <ImageUploadField
+                  label="Logo"
+                  hint="Shown in the header, footer and on invoices."
+                  value={brand?.logoUrl ?? ''}
+                  onChange={(value) => void applyImage('logo', null, value)}
+                />
+              )}
+            </div>
+
+            <div>
+              <p className="admin-form__section-subtitle">
+                Product images {productsQuery.data?.length ? `(${productsQuery.data.length})` : ''}
+              </p>
+              {productsQuery.loading && !productsQuery.data ? (
+                <Skeleton style={{ width: '100%', height: 160, borderRadius: 12 }} />
+              ) : productsQuery.data?.length ? (
+                <ul className="media-list">
+                  {(productsQuery.data ?? []).map((product) => (
+                    <ProductMediaRow key={product.id} product={product} onFile={(file) => void onProductFile(product.id, file)} />
+                  ))}
+                </ul>
+              ) : (
+                <p className="admin-muted">No products found.</p>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+
+    </>
+  )
+}
+
+function ProductMediaRow({ product, onFile }: { product: Product; onFile: (file: File | undefined) => void }) {
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  return (
+    <li className="media-row">
+      <span className="media-row__thumb">
+        {product.images[0] ? (
+          <img src={product.images[0]} alt="" />
+        ) : (
+          <Icon name="box" size={16} />
+        )}
+      </span>
+      <span className="media-row__copy">
+        <strong>{product.name}</strong>
+        <small>Product card · shop grid · product page gallery</small>
+      </span>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(event) => onFile(event.target.files?.[0])}
+      />
+      <Button
+        size="sm"
+        variant="outline"
+        icon="upload"
+        onClick={() => inputRef.current?.click()}
+      >
+        Replace
+      </Button>
+    </li>
+  )
+}

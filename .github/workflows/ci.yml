@@ -1,0 +1,283 @@
+# =============================================================================
+# Continuous integration
+#
+# Runs on every push and pull request. Nothing here deploys, and nothing here
+# needs an AWS credential, so a fork can run the whole suite.
+#
+# The gate exists to catch the three failure modes this repository actually hit:
+#   1. A permission slug that the console gates on but the API never grants.
+#   2. A type error that only appears in one workspace (four separate tsconfigs).
+#   3. An image that builds locally but not from a clean tree.
+#
+# Database tests are split deliberately. `npm test` in the backend workspace runs
+# BOTH unit and integration suites, and the integration suites abort at import
+# time when `DATABASE_URL` points at anything that looks managed or production.
+# On a contributor's machine that reads as a helpful safety net; wired into CI it
+# would either fail every build or tempt someone into disabling the guard. So the
+# unit suites run unconditionally, and the integration suite runs against a
+# throwaway Postgres service container on the runner (see the `integration` job).
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes an in-flight run irrelevant. Deploys are
+# not gated on this workflow, so cancelling cannot interrupt a production rollout.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint. `oxlint` without the old `|| true`, so an actual rule violation fails.
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # frontend and admin are NOT npm workspaces - they deploy as static bundles
+      # and each carries its own lockfile. Root `npm ci` therefore does not touch
+      # them, and their lint/tsc binaries would be missing here on a clean runner.
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Install admin dependencies
+        run: npm ci --prefix admin
+
+      - name: Lint database workspace
+        run: npm run lint:database
+
+      - name: Lint backend
+        run: npm run lint --workspace vedhicfoods-backend
+
+      - name: Lint frontend
+        run: npm run lint --prefix frontend
+
+      - name: Lint admin
+        run: npm run lint --prefix admin
+
+  # ---------------------------------------------------------------------------
+  # Schema + types + unit tests, grouped because they share one install.
+  #
+  # DATABASE_URL is a placeholder. `prisma validate` and `prisma generate` read the
+  # env var but open no connection, so this must never be a real host. It is
+  # loopback on purpose: if a future step ever does try to connect, it fails fast
+  # against nothing instead of against production.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Types, build & unit tests
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=public
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # frontend and admin carry their own lockfiles and are not workspaces, so
+      # root `npm ci` leaves them without node_modules. Without these two steps
+      # the builds below fail on a clean runner with "tsc: not found" - a failure
+      # that cannot happen locally, where a stale install already exists.
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Install admin dependencies
+        run: npm ci --prefix admin
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Validate Prisma schema
+        run: npm run prisma:validate
+
+      # Database and backend are npm workspaces, so they typecheck together.
+      - name: Typecheck & build database workspace
+        run: npm run build:database
+
+      - name: Typecheck & build backend workspace
+        run: npm run build:backend
+
+      # frontend and admin are NOT workspaces (they deploy as static bundles), so
+      # they are driven through their own tsconfig project references.
+      - name: Typecheck & build frontend
+        run: npm run build:frontend
+
+      - name: Typecheck & build admin
+        run: npm run build:admin
+
+      - name: Backend unit tests
+        run: npm run test:unit --workspace vedhicfoods-backend
+
+      - name: Admin tests
+        run: npm test --prefix admin
+
+  # ---------------------------------------------------------------------------
+  # Integration tests against a throwaway database.
+  #
+  # Runs UNCONDITIONALLY, against a Postgres service container on the runner
+  # itself. This is deliberately not secret-gated, for two reasons:
+  #
+  #   1. `secrets` cannot be referenced in a job-level `if:`. GitHub rejects it,
+  #      so a job gated on `secrets.TEST_DATABASE_URL` does not evaluate the way
+  #      it reads. The supported workaround (env at job level, `if` on the steps)
+  #      means the job always runs and most of its steps are skipped - green
+  #      checks that tested nothing, which is worse than no check.
+  #   2. No secret is needed at all. The backend's own safety guard lists
+  #      localhost/127.0.0.1 as unambiguously disposable, so a runner-local
+  #      Postgres is a sanctioned target rather than a workaround. Suites that
+  #      DELETE users/orders/payments/carts are safe against a database that is
+  #      destroyed with the runner.
+  #
+  # The trade-off is honest and worth stating: this proves the migrations apply
+  # and the queries work on one real Postgres version. It does not prove the app
+  # works against RDS (IAM auth, parameter group, MultiAZ failover). That is a
+  # staging check, listed in PRODUCTION_RUNBOOK.md.
+  # ---------------------------------------------------------------------------
+  integration:
+    name: Backend integration tests
+    runs-on: ubuntu-latest
+    env:
+      # Both are set to the same loopback URL: DATABASE_URL so Prisma resolves the
+      # target, TEST_DATABASE_URL so the guard can positively identify it. The
+      # hostname is loopback on purpose - a misconfigured step that tried to reach
+      # a real database fails against nothing instead of against production.
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/vedhicfoods_test?schema=public
+      TEST_DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/vedhicfoods_test?schema=public
+      NODE_ENV: test
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: vedhicfoods_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      # Apply the migration history to an empty database first. `migrate deploy`
+      # rather than `migrate dev`: CI must never be allowed to invent a migration.
+      - name: Apply migrations
+        run: npm run prisma:deploy
+
+      # `migrate deploy` only proves the recorded history applies. It says nothing
+      # about whether a hand-edited schema.prisma or a forgotten `migrate dev`
+      # left the datamodel ahead of the history - a drift that reaches production
+      # as a table or column the running code expects and no migration created.
+      - name: Migration status
+        run: npm run prisma:status
+
+      # The drift guard, and the reason the two steps above are separate.
+      # `migrate deploy` writes the history into the service container's database;
+      # `migrate diff` then asks what would still have to change to make the live
+      # datamodel match schema.prisma. A repository where the two agree produces
+      # exactly one line - "-- This is an empty migration." - and anything else
+      # (a missing CREATE TABLE, an altered column, an extra index) is real drift.
+      #
+      # Deliberately uses `--to-schema-datamodel`, not `--to-migrations`: comparing
+      # against the migration directory would only prove the migrations match each
+      # other, which is the property `migrate deploy` already checked. Comparing
+      # against the DATAMODEL is the comparison that catches a schema.prisma edit
+      # with no migration behind it.
+      #
+      # No secret is involved: DATABASE_URL points at the throwaway service
+      # container on loopback, declared at the top of this job.
+      - name: Detect schema drift
+        run: |
+          set -euo pipefail
+          npx prisma migrate diff \
+            --from-url "$DATABASE_URL" \
+            --to-schema-datamodel database/prisma/schema.prisma \
+            --script > drift.sql
+          echo "Diff between the service database and schema.prisma:"
+          cat drift.sql
+          expected='-- This is an empty migration.'
+          actual="$(tr -d '[:space:]' < drift.sql)"
+          expected_compact="$(printf '%s' "$expected" | tr -d '[:space:]')"
+          if [ "$actual" != "$expected_compact" ]; then
+            echo "::error::database/prisma/schema.prisma and prisma/migrations disagree."
+            echo "::error::Create a migration for the schema change (npm run prisma:migrate),"
+            echo "::error::or revert the schema edit. Never edit a migration that has shipped."
+            exit 1
+          fi
+          echo "No drift: schema.prisma matches the migrated database exactly."
+
+      - name: Seed reference data
+        run: npm run prisma:seed
+
+      - name: Run integration tests
+        run: npm run test:integration --workspace vedhicfoods-backend
+
+  # ---------------------------------------------------------------------------
+  # Image build from a clean checkout.
+  #
+  # Separate from `verify` because Docker-in-Docker costs minutes, and a PR that
+  # fails a unit test should not also pay for a full `npm ci` inside a container.
+  # Built but never pushed: pushing is the deploy workflow's job, and it needs
+  # registry credentials this job deliberately does not have.
+  # ---------------------------------------------------------------------------
+  docker:
+    name: Backend image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Context is the repository root, not backend/ - the backend depends on the
+      # `vedhicfoods-database` workspace and npm links it as a symlink into the
+      # root node_modules. A backend/-scoped build cannot resolve that.
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./backend/Dockerfile
+          push: false
+          # BuildKit cache is exported to GHA so the deploy workflow can import it
+          # instead of re-running `npm ci` in a container from cold.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

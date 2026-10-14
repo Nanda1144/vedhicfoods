@@ -1,0 +1,195 @@
+import { useMemo, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { adminService } from '@/services/adminService'
+import { invoiceService } from '@/services/invoiceService'
+import { useAsync } from '@/hooks'
+import { useToast } from '@/context'
+import { formatCurrency, formatDate } from '@/utils/format'
+import { AdminPageHeader, DataTable, StatusPill, AdminToolbar, PaginationBar } from '@/components/admin'
+import type { Column } from '@/components/admin'
+import type { Invoice } from '@/types'
+import { Badge, Button, Icon, Skeleton } from '@/components/common'
+
+const PAGE_SIZE = 10
+
+export function AdminInvoicesPage() {
+  const { push } = useToast()
+  const navigate = useNavigate()
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState('')
+  const [downloadedIds, setDownloadedIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('vedhic:downloaded-invoices')
+      return new Set(raw ? (JSON.parse(raw) as string[]) : [])
+    } catch {
+      return new Set()
+    }
+  })
+  const [page, setPage] = useState(1)
+
+  const { data, loading, error } = useAsync(() => adminService.invoices(), [])
+
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return (data ?? []).filter((invoice) => {
+      if (query && !`${invoice.invoiceNumber} ${invoice.orderNumber} ${invoice.customerName}`.toLowerCase().includes(query)) return false
+      if (status && invoice.status !== status) return false
+      return true
+    })
+  }, [data, search, status])
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  const totals = useMemo(() => {
+    const issued = data ?? []
+    return {
+      outstanding: issued.filter((invoice) => invoice.status === 'issued').reduce((sum, invoice) => sum + invoice.total, 0),
+      paid: issued.filter((invoice) => invoice.status === 'paid').reduce((sum, invoice) => sum + invoice.total, 0),
+    }
+  }, [data])
+
+  const handleDownload = async (invoice: Invoice) => {
+    if (downloadedIds.has(invoice.id)) {
+      push({ title: 'Already downloaded', description: `${invoice.invoiceNumber} has already been downloaded.` })
+      return
+    }
+
+    // Use the real API to get a signed download URL
+    try {
+      const { downloadUrl } = await invoiceService.downloadUrl(invoice.id)
+      setDownloadedIds((prev) => {
+        const next = new Set(prev)
+        next.add(invoice.id)
+        try {
+          localStorage.setItem('vedhic:downloaded-invoices', JSON.stringify([...next]))
+        } catch {
+          // ignore storage errors
+        }
+        return next
+      })
+      // `noopener` so the signed-URL PDF cannot reach back into the console tab.
+      window.open(downloadUrl, '_blank', 'noopener,noreferrer')
+      push({ title: 'Download started', description: `Opening ${invoice.invoiceNumber}.` })
+    } catch {
+      // Fallback to view page
+      navigate(`/invoice/${invoice.id}`)
+      push({ title: 'Opening invoice', description: `Opening ${invoice.invoiceNumber} for download.` })
+    }
+  }
+
+  const columns: Array<Column<Invoice>> = [
+    {
+      key: 'invoice',
+      header: 'Invoice',
+      sortValue: (invoice) => invoice.invoiceNumber,
+      render: (invoice) => (
+        <span>
+          <strong>{invoice.invoiceNumber}</strong>
+          <span className="type-caption" style={{ display: 'block' }}>Order {invoice.orderNumber}</span>
+        </span>
+      ),
+    },
+    { key: 'customer', header: 'Customer', render: (invoice) => (
+      <span>
+        <strong>{invoice.customerName}</strong>
+        <span className="type-caption" style={{ display: 'block' }}>{invoice.customerEmail}</span>
+      </span>
+    ) },
+    { key: 'issued', header: 'Issued', render: (invoice) => <span className="type-caption">{formatDate(invoice.issuedAt)}</span> },
+    { key: 'gstin', header: 'GSTIN', render: (invoice) => <span className="type-caption">{invoice.gstin ?? '—'}</span> },
+    {
+      key: 'total',
+      header: 'Total',
+      align: 'right',
+      sortValue: (invoice) => invoice.total,
+      render: (invoice) => <strong>{formatCurrency(invoice.total)}</strong>,
+    },
+    { key: 'status', header: 'Status', render: (invoice) => <StatusPill status={invoice.status} /> },
+    {
+      key: 'actions',
+      header: '',
+      align: 'right',
+      render: (invoice) => {
+        const isDownloaded = downloadedIds.has(invoice.id)
+        return (
+          <span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
+            <Link to={`/invoice/${invoice.id}`} target="_blank" className="button button--sm button--ghost">
+              <span>View</span>
+            </Link>
+            {isDownloaded ? (
+              <Badge tone="success" className="admin-invoice-downloaded">
+                <Icon name="check" size={14} /> Downloaded
+              </Badge>
+            ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="download"
+                aria-label={`Download ${invoice.invoiceNumber}`}
+                onClick={() => handleDownload(invoice)}
+              />
+            )}
+          </span>
+        )
+      },
+    },
+  ]
+
+  if (loading && !data) {
+    return (
+      <>
+        <AdminPageHeader title="Invoices" description="GST-compliant invoices for every order." />
+        <section className="admin-card">
+          {Array.from({ length: 5 }).map((_, index) => (
+            <Skeleton key={index} style={{ width: '100%', height: 44, marginBottom: 8 }} />
+          ))}
+        </section>
+      </>
+    )
+  }
+
+  if (error) {
+    return (
+      <>
+        <AdminPageHeader title="Invoices" description="GST-compliant invoices for every order." />
+        <p className="admin-note admin-note--error">{error.message}</p>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <AdminPageHeader
+        title="Invoices"
+        description="GST-compliant invoices, generated at checkout."
+        actions={
+          <>
+            <Badge tone="warning" dot>Outstanding {formatCurrency(totals.outstanding)}</Badge>
+            <Badge tone="success" dot>Collected {formatCurrency(totals.paid)}</Badge>
+          </>
+        }
+      />
+
+      <AdminToolbar
+        search={search}
+        onSearch={(value) => {
+          setSearch(value)
+          setPage(1)
+        }}
+        searchPlaceholder="Search invoice, order or customer…"
+        filters={[{ label: 'Status', value: status, options: ['draft', 'issued', 'paid', 'cancelled'], onChange: setStatus }]}
+      />
+
+      <section className="admin-card">
+        <DataTable
+          columns={columns}
+          rows={paged}
+          rowKey={(invoice) => invoice.id}
+          caption="Invoices"
+          footer={<PaginationBar page={page} pageCount={pageCount} total={filtered.length} pageSize={PAGE_SIZE} onPageChange={setPage} />}
+        />
+      </section>
+    </>
+  )
+}

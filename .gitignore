@@ -12,6 +12,66 @@ dist
 dist-ssr
 *.local
 
+# ------------------------------------------------------------------------------
+# Environment / secret files
+#
+# SECURITY: real .env files exist in admin/, backend/, database/ and frontend/ and
+# were previously untracked only by accident — nothing stopped a `git add .` or an
+# IDE's auto-stage from committing live JWT secrets, Razorpay key secrets, the
+# payment-credential encryption key and the database password.
+#
+# `.env.example` files stay tracked on purpose: they document the required keys.
+# ------------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Frontend and admin production build configuration. Vite inlines `VITE_*` into
+# the bundle, so these files contain no secret — their only content is
+# VITE_API_URL and the two fallback flags. Tracking them is what stops a deploy
+# from shipping a storefront (or an admin portal) that talks to
+# http://localhost:5000 because the build host forgot to export the variable.
+# The failure that causes is invisible: the site loads, renders, and then fails on
+# every write.
+!frontend/.env.production
+!admin/.env.production
+
+# Additional secret-bearing file types
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets*.json
+*credentials*.json
+service-account*.json
+
+# AWS SAM / CDK / Terraform state can contain plaintext resource attributes
+.aws-sam/
+cdk.out/
+*.tfstate
+*.tfstate.*
+
+# ------------------------------------------------------------------------------
+# Test / coverage output
+# ------------------------------------------------------------------------------
+coverage/
+.nyc_output/
+
+# ------------------------------------------------------------------------------
+# Local disposable PostgreSQL cluster
+#
+# `.pgtest/` is a throwaway `pg_ctl` cluster (data directory, unix sockets, log
+# files) started on a spare port for running migrations and integration suites
+# against a real database without touching anything managed. It holds a complete
+# data directory including the database password material Postgres itself
+# writes, and it is regenerated in seconds - so it must never be committed, and
+# it must never be mistaken for a backup.
+# ------------------------------------------------------------------------------
+.pgtest/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

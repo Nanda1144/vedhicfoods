@@ -1,0 +1,507 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >-
+  Vedhic Foods - production PostgreSQL (RDS) with point-in-time recovery,
+  encryption and the parameters needed to make a performance problem visible.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Database }
+        Parameters: [DatabaseName, MasterUsername, DatabaseEngineVersion, DatabaseInstanceClass, AllocatedStorage, StorageAutoscalingMax]
+      - Label: { default: Durability (do not lower without reading the notes) }
+        Parameters: [BackupRetentionPeriod, PreferredBackupWindow, PreferredMaintenanceWindow, EnableDeletionProtection]
+      - Label: { default: Network }
+        Parameters: [VpcId, PrivateSubnetIds, TaskSecurityGroupId]
+      - Label: { default: Observability }
+        Parameters: [LogRetentionDays, EnablePerformanceInsights, EnableEnhancedMonitoring]
+
+Parameters:
+
+  # ---------------------------------------------------------------------------
+  # Database
+  # ---------------------------------------------------------------------------
+  DatabaseName:
+    Type: String
+    Default: vedhicfoods
+    AllowedPattern: '^[A-Za-z][A-Za-z0-9]{0,62}$'
+    ConstraintDescription: must start with a letter and contain only letters and digits.
+
+  MasterUsername:
+    Type: String
+    Default: vedhicfoods_admin
+    Description: >-
+      Administrative role used for migrations and manual access. NO password is
+      supplied to this template on purpose - see ManageMasterUserPassword below.
+
+  DatabaseEngineVersion:
+    Type: String
+    Default: '16.4'
+    Description: >-
+      PostgreSQL major.minor. Pin this exactly. RDS will silently take the
+      instance to the newest patch of the chosen minor version, but upgrading
+      the MAJOR version is a separate, deliberate operation that needs a dump
+      and restore - an unpinned EngineVersion lets a routine replacement turn
+      into an unplanned major upgrade.
+    AllowedValues: ['16.4', '16.3', '15.7']
+
+  DatabaseInstanceClass:
+    Type: String
+    Default: db.t4g.medium
+    Description: >-
+      Start here and only move up on evidence (the CPU, connections and free
+      storage alarms in the monitoring stack are that evidence). A larger
+      instance is a bill that cannot be un-spent; an undersized one shows up as
+      connection timeouts on checkout.
+
+  AllocatedStorage:
+    Type: Number
+    Default: 50
+    MinValue: 20
+    Description: Initial storage in GiB. Storage autoscaling below raises it when the disk fills.
+
+  StorageAutoscalingMax:
+    Type: Number
+    Default: 1000
+    MinValue: 0
+    Description: >-
+      Ceiling, in GiB, that automatic storage scaling may grow the volume to.
+      RDS requires the threshold to be at least 10% above the current
+      AllocatedStorage (as an example, RDS returns an error like "Invalid max
+      storage size" for a number under that, and recommends a 26% margin so the
+      "approaching maximum" event does not fire on normal growth). The previous
+      template wired MaxAllocatedStorage to AllocatedStorage itself, which
+      satisfied neither the API (for a 50 GiB start) nor the intent: there was
+      no headroom to scale into. 1000 GiB matches RDS's own default threshold.
+      0 disables storage autoscaling.
+
+  # ---------------------------------------------------------------------------
+  # Durability
+  #
+  # Every default here is chosen so that an unattended failure is survivable.
+  # Lowering BackupRetentionPeriod to save a little money trades away the ability
+  # to recover from an incident nobody noticed yet.
+  # ---------------------------------------------------------------------------
+  BackupRetentionPeriod:
+    Type: Number
+    Default: 35
+    MinValue: 7
+    MaxValue: 35
+    Description: >-
+      Days of automated backups to keep. THIS IS WHAT ENABLES POINT-IN-TIME
+      RECOVERY, and it is not a separate setting: RDS retains WAL segments for
+      exactly this window, and PITR can restore to any moment inside it. Set this
+      to 0 and you lose PITR entirely - a bad deploy, an errant DELETE or a
+      botched migration can only be recovered by restoring the last daily snapshot,
+      losing up to 24 hours of orders. 35 is the maximum RDS PostgreSQL allows.
+    AllowedValues: [0, 1, 2, 3, 4, 5, 6, 7, 8, 14, 20, 30, 35]
+
+  PreferredBackupWindow:
+    Type: String
+    Default: 03:00-04:00
+    Description: >-
+      UTC window for automated backups. Must not overlap PreferredMaintenanceWindow;
+      AWS rejects the deployment if it does.
+
+  PreferredMaintenanceWindow:
+    Type: String
+    Default: sun:04:30-sun:05:30
+    Description: >-
+      UTC window for patching and minor version upgrades. Deliberately AFTER the
+      backup window: a maintenance event that fails to patch a hotfix should still
+      leave you a snapshot from the same morning to fall back to.
+
+  EnableDeletionProtection:
+    Type: String
+    Default: 'true'
+    Description: >-
+      When true, the database cannot be deleted at all - not by console, not by a
+      mistaken `aws rds delete-db-instance`, not by deleting this CloudFormation
+      stack. Deletion must be explicitly disabled first. Orders, customer records
+      and invoices are the business; this flag is what keeps a bad week from
+      becoming a business.
+    AllowedValues: ['true', 'false']
+
+  # ---------------------------------------------------------------------------
+  # Network
+  # ---------------------------------------------------------------------------
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC containing PrivateSubnetIds.
+
+  PrivateSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: >-
+      At least two PRIVATE subnets in different availability zones. Private, not
+      public: the database is only ever reached from the ECS tasks. With MultiAZ
+      enabled these also back the standby instance. (CFN has no MinItems on
+      parameters - an under-length list is caught at create time, when the DB
+      subnet group is rejected.)
+
+  TaskSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: >-
+      Security group of the ECS tasks. The database accepts PostgreSQL only from
+      this group, so the blast radius of a compromised task is one container
+      rather than whatever can route to 5432.
+
+  # ---------------------------------------------------------------------------
+  # Observability
+  # ---------------------------------------------------------------------------
+  LogRetentionDays:
+    Type: Number
+    Default: 90
+    Description: >-
+      Retention for the PostgreSQL log group. Defaults to never expiring otherwise.
+      This is also the ceiling on how far back a slow-query or lock-wait
+      investigation can reach, which is why it is kept at 90 rather than 14.
+
+  EnablePerformanceInsights:
+    Type: String
+    Default: 'true'
+    Description: >-
+      Turns on Performance Insights so the database can be diagnosed from its own
+      telemetry rather than guessed at. Off by default in RDS, which is why "the
+      site is slow" usually has no answer until it is on.
+    AllowedValues: ['true', 'false']
+
+  EnableEnhancedMonitoring:
+    Type: String
+    Default: 'true'
+    Description: >-
+      Enhanced Monitoring exposes the OS-level metrics (freeable memory, swap,
+      disk) that RDS's native metrics omit. The freeable-memory alarm in the
+      monitoring stack depends on it - without this the closest signal is
+      DatabaseMemoryUtilization from Performance Insights, which has a coarser
+      resolution. Requires an IAM role, created below.
+    AllowedValues: ['true', 'false']
+
+Mappings:
+  # Maps a pinned PostgreSQL MINOR version (the only thing DatabaseEngineVersion
+  # lets you choose) to the parameter-group FAMILY it actually belongs to. RDS
+  # families are major-version names ("postgres16"), not "postgres16.4" - the
+  # old `Family: !Sub 'postgres${DatabaseEngineVersion}'` produced exactly that
+  # and is rejected at create time. A minor version added to AllowedValues with
+  # no row here fails loudly in FindInMap instead of deploying half-configured.
+  PostgresFamilies:
+    '16.4':
+      Family: postgres16
+    '16.3':
+      Family: postgres16
+    '15.7':
+      Family: postgres15
+
+Conditions:
+  EnhancedMonitoringEnabled: !Equals [!Ref EnableEnhancedMonitoring, 'true']
+  PerformanceInsightsEnabled: !Equals [!Ref EnablePerformanceInsights, 'true']
+  DeletionProtectionEnabled: !Equals [!Ref EnableDeletionProtection, 'true']
+
+Resources:
+
+  # ---------------------------------------------------------------------------
+  # Key for storage encryption and Performance Insights
+  # ---------------------------------------------------------------------------
+  DatabaseKmsKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: >-
+        Envelope encryption for the RDS instance, its storage and Performance
+        Insights. A CloudFormation-managed key (aws/rds) also encrypts, but it is
+        tied to the region and account, cannot have its key policy reviewed
+        independently, and cannot be rotated on a schedule you control. Retained
+      # NOT deleted with the stack: destroying the key makes the stored data
+      # unrecoverable, which would defeat the point of the backups.
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableRootAccountAdministration
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: AllowRDSServiceUse
+            Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKeyWithoutPlaintext
+              - kms:DescribeKey
+            Resource: '*'
+      Tags:
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  DatabaseKmsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${AWS::StackName}/rds'
+      TargetKeyId: !Ref DatabaseKmsKey
+
+  # ---------------------------------------------------------------------------
+  # Subnet group
+  #
+  # This is what makes RDS place the standby in a second AZ under MultiAZ, and it
+  # is also the guard against the misconfiguration that actually bites: creating
+  # a DB subnet group from PUBLIC subnets makes the instance routable from the
+  # internet even with PubliclyAccessible false, because the subnet route table
+  # still reaches an internet gateway.
+  # ---------------------------------------------------------------------------
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: 'Private subnets for the Vedhic Foods database'
+      SubnetIds: !Ref PrivateSubnetIds
+
+  # ---------------------------------------------------------------------------
+  # Parameter group
+  #
+  # Every setting here exists to make a problem visible rather than to tune
+  # performance. An RDS PostgreSQL instance has log_min_duration_statement and
+  # log_temp_files_limit OFF by default, which means a query that degrades the
+  # site leaves no trace at all after the connection closes.
+  # ---------------------------------------------------------------------------
+  DatabaseParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: >-
+        Surfaces slow queries, lock waits, temp-file bloat and checkpoints, which
+        RDS does not log out of the box.
+      Family: !FindInMap [PostgresFamilies, !Ref DatabaseEngineVersion, Family]
+      # `Parameters` is a MAPPING of name -> value (documented type: Json), not a
+      # list of {Name, Value} objects. The list form is widely copy-pasted from
+      # other parameter types and is rejected at deploy time.
+      Parameters:
+        # Statements slower than 500 ms are logged with duration. Chosen to catch
+        # the queries that actually hurt (sequential scans on a growing orders
+        # table) without logging every query, which costs I/O and fills the log.
+        log_min_duration_statement: '500'
+        # Errors that do not abort the statement.
+        log_min_error_statement: error
+        # A statement cancelled while waiting on a lock. This is how deadlocks and
+        # long transactions announce themselves; invisible by default.
+        log_lock_waits: '1'
+        log_temp_files: '1'
+        # Log every temp file over 0 KB. Temp-file churn means a query is sorting
+        # or hashing on disk because work_mem is too small for it.
+        log_temp_files_limit: '0'
+        # Makes crash-restart and clean-shutdown events attributable. Cheap, and it
+        # distinguishes a clean restart from an OOM kill.
+        log_checkpoints: '1'
+        checkpoint_completion_target: '0.9'
+        # Log the duration of autovacuum. Long vacuum runs are the usual reason a
+        # table feels slow right after a bulk edit.
+        log_autovacuum_min_duration: '1000'
+        # Connections are the resource that actually exhausts first on a small
+        # instance. Capping this makes the failure mode a clean pool error the app
+        # can retry instead of the RDS proxy dropping arbitrary clients.
+        max_connections: '200'
+
+  # ---------------------------------------------------------------------------
+  # Security group
+  # ---------------------------------------------------------------------------
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub 'PostgreSQL for ${DatabaseName}, reachable only from ECS tasks'
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          # Scoped to the task SG, NOT 0.0.0.0/0. There is no reason for the
+          # database to be reachable from outside the VPC, and this line is the
+          # difference between a contained compromise and an open one.
+          SourceSecurityGroupId: !Ref TaskSecurityGroupId
+          Description: PostgreSQL from ECS tasks only
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}/db'
+
+  # ---------------------------------------------------------------------------
+  # IAM role for Enhanced Monitoring
+  #
+  # Used by the RDS agent to publish OS-level metrics. Read-only by design: it
+  # publishes metrics and nothing else, so it is not attached to the application.
+  # ---------------------------------------------------------------------------
+  EnhancedMonitoringRole:
+    Type: AWS::IAM::Role
+    Condition: EnhancedMonitoringEnabled
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: monitoring.rds.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole'
+      Tags:
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ---------------------------------------------------------------------------
+  # The instance
+  # ---------------------------------------------------------------------------
+  Database:
+    Type: AWS::RDS::DBInstance
+    # Snapshot, then retain: the instance is snapshotted when the stack is deleted
+    # and the snapshot is kept. Combined with DeletionProtection this is belt and
+    # braces - DeletionProtection stops an accidental delete, this catches a
+    # deliberate one.
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Retain
+    Properties:
+      DBName: !Ref DatabaseName
+      Engine: postgres
+      EngineVersion: !Ref DatabaseEngineVersion
+      DBInstanceClass: !Ref DatabaseInstanceClass
+      AllocatedStorage: !Ref AllocatedStorage
+
+      MasterUsername: !Ref MasterUsername
+      # RDS creates, stores and ROTATES the master password itself, in Secrets
+      # Manager. That removes the one credential that would otherwise have to live
+      # somewhere permanent: a hardcoded MasterUserPassword in this template would
+      # be readable by anyone with `cloudformation:GetTemplate`, and would sit in
+      # this repository's history forever.
+      ManageMasterUserPassword: true
+      # NOTE this is an OBJECT, not a secret ARN. MasterUserSecret takes only the
+      # KMS key used to encrypt the managed secret; the secret itself is created by
+      # RDS and its ARN is a RETURN VALUE read as
+      # `!GetAtt Database.MasterUserSecret.SecretArn`. Passing a secret ARN here
+      # (or a Ref to an AWS::SecretsManager::Secret) is a type error.
+      MasterUserSecret:
+        KmsKeyId: !Ref DatabaseKmsKey
+
+      # A standby in a second AZ behind an automatic DNS failover. Without it, an
+      # AZ-level problem is an outage of whatever it takes to notice it.
+      MultiAZ: true
+
+      StorageEncrypted: true
+      KmsKeyId: !Ref DatabaseKmsKey
+      StorageType: gp3
+      # Storage autoscaling. Without this the disk fills, writes start failing,
+      # and the FreeStorageSpace alarm fires too late to do anything but diagnose.
+      # The threshold is deliberately its own parameter: wiring it to
+      # AllocatedStorage would ask RDS to autoscale up to the size it is already.
+      MaxAllocatedStorage: !Ref StorageAutoscalingMax
+      # Tagged onto every snapshot this instance takes, which is what makes the
+      # snapshot list navigable during a restore.
+      CopyTagsToSnapshot: true
+
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      PubliclyAccessible: false
+
+      # --- Durability -------------------------------------------------------
+      BackupRetentionPeriod: !Ref BackupRetentionPeriod
+      PreferredBackupWindow: !Ref PreferredBackupWindow
+      PreferredMaintenanceWindow: !Ref PreferredMaintenanceWindow
+      # RDS's backup is crash-consistent: it recovers to the last consistent point
+      # before the window opens, not to an arbitrary instant inside it. PITR is
+      # more granular because it replays WAL from the last snapshot. There is no
+      # separate `BackupWindow` property - the window above is the whole setting.
+      DeletionProtection: !If [DeletionProtectionEnabled, true, false]
+      EnableIAMDatabaseAuthentication: true
+      AutoMinorVersionUpgrade: true
+      AllowMajorVersionUpgrade: false
+
+      # --- Observability ----------------------------------------------------
+      EnableCloudwatchLogsExports:
+        - postgresql
+        - upgrade
+      # `upgrade` is exported as well as `postgresql` specifically so that a
+      # failed major-version upgrade has a log explaining why. Without it the
+      # instance comes back on the old version and nothing says why.
+      DBParameterGroupName: !Ref DatabaseParameterGroup
+      MonitoringInterval: !If [EnhancedMonitoringEnabled, 60, 0]
+      MonitoringRoleArn: !If [EnhancedMonitoringEnabled, !GetAtt EnhancedMonitoringRole.Arn, !Ref 'AWS::NoValue']
+      # As with DeletionProtection, this must be `!If` - Ref cannot resolve a Condition.
+      # The property is EnablePerformanceInsights, not PerformanceInsightsEnabled;
+      # the latter is the EC2/Systems-Manager naming and is rejected here.
+      EnablePerformanceInsights: !If [PerformanceInsightsEnabled, true, false]
+      PerformanceInsightsKMSKeyId: !If [PerformanceInsightsEnabled, !Ref DatabaseKmsKey, !Ref 'AWS::NoValue']
+      PerformanceInsightsRetentionPeriod: !If [PerformanceInsightsEnabled, 731, !Ref 'AWS::NoValue']
+
+      Tags:
+        - Key: Name
+          Value: !Ref DatabaseName
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Environment
+          Value: production
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL log group
+  # ---------------------------------------------------------------------------
+  DatabaseLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/aws/rds/instance/${Database}/postgresql'
+      RetentionInDays: !Ref LogRetentionDays
+      # The postgres.log path is created by RDS, not by this template, and can
+      # legitimately not exist yet on a first create. Absent log groups are only
+      # an error for subscriptions, never for metric filters - if this resource
+      # ever fails to create, deleting it is safe: RDS will create it on the next
+      # log flush.
+      Tags:
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  DatabaseEndpoint:
+    Description: Connection endpoint (no port).
+    Value: !GetAtt Database.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-endpoint'
+
+  DatabasePort:
+    Value: !GetAtt Database.Endpoint.Port
+    Export:
+      Name: !Sub '${AWS::StackName}-port'
+
+  DatabaseLogGroupName:
+    Description: Log group the monitoring stack attaches metric filters to.
+    Value: !Ref DatabaseLogGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-log-group'
+
+  MasterSecretArn:
+    Description: >-
+      RDS-managed master credentials. Assembles the admin connection string. This
+      is a RETURN VALUE of the instance, not a separate secret resource - RDS
+      creates and rotates it. The application uses its own DATABASE_URL secret,
+      which is built from this and deliberately not a copy of it.
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
+    Export:
+      Name: !Sub '${AWS::StackName}-master-secret'
+
+  PitrRetentionDays:
+    Description: >-
+      Maximum age of a point-in-time recovery target. Zero means PITR is disabled -
+      restore is then limited to the oldest manual snapshot.
+    Value: !Ref BackupRetentionPeriod
+
+  RecoveryObjective:
+    Description: >-
+      Worst-case data loss in a regional failure, in minutes, assuming PITR is
+      enabled. RDS replays WAL continuously, so this is small; it is NOT the
+      recovery TIME, which is dominated by how long the restore takes to run.
+    Value: !If [DeletionProtectionEnabled, 'Minutes of data loss (WAL replay). Restore duration depends on database size.', 'Deletion protection disabled - verify before relying on this.']
+
+  DatabaseSecurityGroupId:
+    Description: Attach to anything else that needs to reach PostgreSQL.
+    Value: !Ref DatabaseSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-db-sg'
+
+  DatabaseLogGroupArn:
+    Value: !GetAtt DatabaseLogGroup.Arn

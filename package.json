@@ -1,26 +1,35 @@
 {
-  "name": "vedhifoods",
-  "version": "0.0.0",
+  "name": "vedhicfoods-platform",
+  "version": "1.0.0",
   "private": true,
-  "description": "This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.",
-  "type": "module",
-  "main": "index.js",
+  "description": "VEDHIC FOODS — Premium Organic E-Commerce Platform Monorepo.",
+  "workspaces": [
+    "database",
+    "backend"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.4"
+    "dev:frontend": "npm run dev --prefix frontend",
+    "dev:admin": "npm run dev --prefix admin",
+    "dev:backend": "npm run dev --prefix backend",
+    "build:database": "npm run build --workspace vedhicfoods-database",
+    "build:backend": "npm run build --workspace vedhicfoods-backend",
+    "build:frontend": "npm run build --prefix frontend",
+    "build:admin": "npm run build --prefix admin",
+    "build": "npm run build:database && npm run build:backend && npm run build:frontend && npm run build:admin",
+    "lint": "npm run lint:database && npm run lint --workspace vedhicfoods-backend && npm run lint --prefix frontend && npm run lint --prefix admin",
+    "lint:database": "oxlint database",
+    "typecheck": "npm run build:database && npm run build:backend && npm run typecheck --prefix frontend && npm run typecheck --prefix admin",
+    "test": "npm test --workspace vedhicfoods-backend",
+    "prisma:generate": "npm run prisma:generate --workspace vedhicfoods-database",
+    "prisma:validate": "npm run prisma:validate --workspace vedhicfoods-database",
+    "prisma:migrate": "npm run prisma:migrate --workspace vedhicfoods-database",
+    "prisma:deploy": "npm run prisma:deploy --workspace vedhicfoods-database",
+    "prisma:status": "npm run prisma:status --workspace vedhicfoods-database",
+    "prisma:seed": "npm run prisma:seed --workspace vedhicfoods-database",
+    "prisma:studio": "npm run prisma:studio --workspace vedhicfoods-database"
   },
   "devDependencies": {
-    "@types/node": "^24.13.3",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.7",
-    "@vitejs/plugin-react": "^6.1.1",
+    "jsdom": "^30.1.2",
     "oxlint": "^1.81.0",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"

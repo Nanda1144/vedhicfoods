@@ -1,0 +1,345 @@
+# =============================================================================
+# Continuous deployment to ECS on AWS
+#
+# Triggered only from `main`, and only after CI is green. Deploys are held to the
+# `production` GitHub Environment, which is where the approval gate, the branch
+# restriction and the deployment branch policy are configured.
+#
+# AUTHENTICATION - GitHub OIDC, not stored keys:
+#   The workflow exchanges a short-lived OIDC token for AWS credentials scoped to
+#   one IAM role. No long-lived access key is stored in this file or in the
+#   runner, so a compromised workflow token is useless outside this repo, and
+#   there is nothing to rotate on a schedule. Set up the provider and the role
+#   trust policy exactly as documented in backend/infra/README.md.
+#
+# SECRET HANDLING:
+#   - Application secrets (DATABASE_URL, JWT_SECRET, RAZORPAY_*, BREVO_API_KEY)
+#     are NEVER passed to this workflow. They live in AWS Secrets Manager and are
+#     injected into the container by the ECS task definition, so they never exist
+#     in a runner, in build args, or in an image layer.
+#   - Secrets are never echoed. Every shell step sets `set -euo pipefail` and none
+#     enable shell tracing, so a failing command cannot spill its arguments, and
+#     no secret value is interpolated into a command line that gets logged - they
+#     are passed through the environment, which the runner masks.
+#
+# MIGRATION ORDERING:
+#   Migrations run as an ECS one-off task BEFORE the service is updated. The
+#   currently-running tasks keep serving the old code against the new schema,
+#   which is only safe for backward-compatible migrations - see the "expand and
+#   contract" requirement in backend/PRODUCTION_RUNBOOK.md. The alternative
+#   ordering is worse: new code against an old schema fails the moment the task
+#   starts, and with no rollback path for the schema it becomes an incident.
+# =============================================================================
+
+name: Deploy
+
+on:
+  # Fires when CI finishes, NOT on the push itself. Triggering on `push: main`
+  # would start the deploy in parallel with CI, so "only after CI is green" in
+  # the header above would be a lie: a failing test and a production rollout
+  # would race, and whichever finished first would win. `workflow_run` is the
+  # only trigger that makes the ordering real.
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_migrations:
+        description: 'Run "prisma migrate deploy" before rolling the service'
+        type: boolean
+        default: true
+
+# Never let two deploys race. A rolling ECS update plus a migration is not safe
+# to interleave, so this is cancelled-in-progress: false - the newer run waits.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  # Required to mint the OIDC token that `configure-aws-credentials` exchanges.
+  # Without this the assume-role step fails with "unauthorized to request token".
+  id-token: write
+
+env:
+  NODE_VERSION: '22'
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER_NAME }}
+  ECS_SERVICE: ${{ vars.ECS_SERVICE_NAME }}
+
+jobs:
+  deploy:
+    name: Build, migrate & roll out
+    runs-on: ubuntu-latest
+    # A workflow_run trigger fires for failures and cancellations too, so the
+    # conclusion has to be checked here or a red CI would deploy.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    # The Environment is what provides the approval gate for a production change.
+    environment:
+      name: production
+      url: ${{ vars.FRONTEND_URL }}
+
+    # The commit CI tested, used by EVERY step below rather than only by the
+    # checkout. On `workflow_run`, `github.sha` is the head of the branch at the
+    # moment this workflow starts, which can already be a newer commit than the
+    # one CI just ran on - so tagging the image `github.sha` while checking out
+    # `workflow_run.head_sha` builds one commit and claims another. On
+    # `workflow_dispatch` the `workflow_run` property does not exist and
+    # dereferences to an empty string, so `github.sha` (the ref the operator
+    # dispatched on) is used instead.
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+    steps:
+      # Deploy the exact commit CI tested, not whatever is at the branch head now.
+      # Between CI finishing and this job starting, a newer commit can land on
+      # main; without pinning, that untested commit is what gets deployed.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+
+      - name: Assert configuration is present
+        # Fails loudly and early rather than at `aws ecr get-login-password`, where
+        # the message would be a generic authorization error that reads like a
+        # permissions problem rather than a missing repository variable.
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "$AWS_REGION" ]   || missing+=("vars.AWS_REGION")
+          [ -n "$ECS_CLUSTER" ] || missing+=("vars.ECS_CLUSTER_NAME")
+          [ -n "$ECS_SERVICE" ] || missing+=("vars.ECS_SERVICE_NAME")
+          [ -n "$AWS_ROLE_ARN" ] || missing+=("vars.AWS_DEPLOY_ROLE_ARN")
+          [ -n "$ECR_REPOSITORY" ] || missing+=("vars.ECR_REPOSITORY")
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "::error::Missing required repository variables: ${missing[*]}"
+            exit 1
+          fi
+        env:
+          AWS_ROLE_ARN: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Uses the OIDC exchange. `role-session-name` appears in CloudTrail, which
+      # is what makes an individual deploy traceable after the fact.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-deploy-${{ github.run_id }}
+
+      - name: Login to ECR
+        run: |
+          set -euo pipefail
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+        env:
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./backend/Dockerfile
+          push: true
+          # Immutable, content-addressed tag. Deploying `latest` makes a rollback
+          # ambiguous, because `latest` no longer points at the running image.
+          tags: |
+            ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ env.DEPLOY_SHA }}
+            ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:stable
+          # Imports the cache the CI workflow exported, so the layers that did not
+          # change are not rebuilt from scratch in production.
+          cache-from: type=gha
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      # -------------------------------------------------------------------------
+      # Migrations as a one-off task.
+      #
+      # It runs in the same cluster as the service so it inherits the task role and
+      # the Secrets Manager secret injection, and reaches the database over the same
+      # private network path. Running Prisma from the runner instead would require
+      # putting DATABASE_URL in GitHub Secrets - a copy of the production database
+      # credential in a second place to keep and rotate.
+      # -------------------------------------------------------------------------
+      - name: Run database migrations
+        # Migrations run on the AUTOMATED path - that is the whole point of
+        # running them before the service is updated. The previous condition
+        # (`event_name == 'workflow_dispatch' && inputs.run_migrations ||
+        # event_name == 'push'`) named an event this workflow never receives: the
+        # triggers are `workflow_run` and `workflow_dispatch`, so it was false on
+        # every real run and the schema was silently never migrated.
+        #
+        # `workflow_dispatch` keeps `run_migrations` as the escape hatch: uncheck
+        # it to roll a new image without touching the schema (re-running a deploy
+        # whose migration already applied). `inputs` is empty on `workflow_run`,
+        # dereferencing to an empty string, but the `workflow_run` branch is
+        # listed first so the input is only ever consulted on a dispatch.
+        if: >-
+          github.event_name == 'workflow_run' ||
+          (github.event_name == 'workflow_dispatch' && inputs.run_migrations)
+        run: |
+          set -euo pipefail
+          echo "Applying migrations from ${IMAGE_TAG}"
+
+          # `run-task` must be called exactly once. Placing the task is what starts
+          # the migration, so capturing the ARN has to come from the same call -
+          # issuing a second one to get the ARN would apply every migration twice.
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$ECS_TASK_DEFINITION" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS]}" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"backend\",\"command\":[\"npx\",\"prisma\",\"migrate\",\"deploy\",\"--schema\",\"database/prisma/schema.prisma\"]}]}" \
+            --query 'tasks[0].taskArn' --output text --region "$AWS_REGION")
+
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
+            echo "::error::ECS placed no migration task; aborting before the service update"
+            exit 1
+          fi
+          echo "Migration task: $TASK_ARN"
+
+          # `run-task` returns as soon as the task is placed, which proves nothing
+          # about whether the migration succeeded. Without this wait the service
+          # would roll forward while a migration is still applying or has failed.
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" --region "$AWS_REGION"
+
+          EXIT_CODE=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text --region "$AWS_REGION")
+          REASON=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' --output text --region "$AWS_REGION")
+
+          echo "Migration task stopped: exit=$EXIT_CODE reason=$REASON"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::Migration failed (exit $EXIT_CODE). The service was NOT updated."
+            echo "::error::Do not re-run blindly - 'prisma migrate deploy' is transactional per migration,"
+            echo "::error::but a partially applied history needs inspection with 'prisma migrate status'."
+            exit 1
+          fi
+        env:
+          IMAGE_TAG: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ env.DEPLOY_SHA }}
+          ECS_TASK_DEFINITION: ${{ vars.ECS_MIGRATION_TASK_DEFINITION }}
+          SUBNETS: ${{ vars.PRIVATE_SUBNET_IDS }}
+          SECURITY_GROUPS: ${{ vars.TASK_SECURITY_GROUP_ID }}
+
+      - name: Register new task definition revision
+        run: |
+          set -euo pipefail
+
+          # Patch the CURRENTLY REGISTERED task definition rather than registering
+          # backend/infra/ecs-task-definition.json directly. That file is a template
+          # full of REPLACE_ME markers (role ARNs, secret ARNs, log group, SES
+          # sender) which cannot be deployed as-is, and re-deriving them here would
+          # mean the deployed definition could silently drift from the one an
+          # operator reviewed. Fetching the live definition and replacing only
+          # `.image` guarantees the deployed task differs from the running one in
+          # exactly one way.
+          CURRENT=$(aws ecs describe-task-definition \
+            --task-definition "$ECS_TASK_FAMILY" \
+            --query 'taskDefinition' --output json --region "$AWS_REGION")
+
+          # `--skip-attributes` strips response-only fields (status, revision,
+          # registeredAt, compatibilities) that register-task-definition rejects.
+          NEW_REVISION=$(echo "$CURRENT" | jq --arg image "$FULL_IMAGE" '
+            del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)
+            | .containerDefinitions[0].image = $image
+          ' | aws ecs register-task-definition --cli-input-json file:///dev/stdin \
+            --query 'taskDefinition.revision' --output text --region "$AWS_REGION")
+
+          if [ -z "$NEW_REVISION" ] || [ "$NEW_REVISION" = "None" ]; then
+            echo "::error::register-task-definition returned no revision"
+            exit 1
+          fi
+          echo "Registered revision $NEW_REVISION"
+          echo "NEW_REVISION=$NEW_REVISION" >> "$GITHUB_ENV"
+
+          # Prove the image actually changed. If the ARN was never substituted by a
+          # prior setup step, the new revision would be identical to the old one and
+          # the deploy would report success while serving the previous build.
+          DEPLOYED_IMAGE=$(aws ecs describe-task-definition \
+            --task-definition "$ECS_TASK_FAMILY:$NEW_REVISION" \
+            --query 'taskDefinition.containerDefinitions[0].image' --output text --region "$AWS_REGION")
+          if [ "$DEPLOYED_IMAGE" != "$FULL_IMAGE" ]; then
+            echo "::error::Expected image $FULL_IMAGE but the task definition carries $DEPLOYED_IMAGE"
+            exit 1
+          fi
+          echo "Verified image: $DEPLOYED_IMAGE"
+        env:
+          ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+          FULL_IMAGE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ env.DEPLOY_SHA }}
+
+      - name: Update service to new task definition
+        run: |
+          set -euo pipefail
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$ECS_TASK_FAMILY:$NEW_REVISION" \
+            --region "$AWS_REGION" >/dev/null
+          echo "Service $ECS_SERVICE now targeting revision $NEW_REVISION"
+        env:
+          ECS_TASK_FAMILY: ${{ vars.ECS_TASK_FAMILY }}
+
+      - name: Wait for service to stabilise
+        run: |
+          set -euo pipefail
+          # The deploy is not finished when update-service returns - it returns
+          # immediately. `aws ecs wait services-stable` blocks until the desired
+          # count is running and healthy AND the deployment has settled, which is
+          # the first point at which the ALB is actually serving the new image.
+          # Without it the workflow goes green on a deployment that is still
+          # crash-looping.
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --region "$AWS_REGION"
+
+          RUNNING=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query 'services[0].runningCount' --output text --region "$AWS_REGION")
+          echo "Running tasks: $RUNNING"
+
+      - name: Smoke test the public API
+        run: |
+          set -euo pipefail
+          # Proves the whole path a shopper takes: Route53 -> ACM ->
+          # ALB -> ECS -> database. A green ECS deploy with a broken target-group
+          # health check is not a successful release.
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if curl --fail --silent --show-error --max-time 10 "$API_URL/health/ready" > ready.json; then
+              echo "Readiness OK after ${attempt} attempt(s)"
+              cat ready.json
+              exit 0
+            fi
+            echo "Attempt ${attempt}/10 not ready yet; retrying in 10s"
+            sleep 10
+          done
+          echo "::error::Readiness endpoint never returned 200. Roll back - see PRODUCTION_RUNBOOK.md"
+          exit 1
+        env:
+          API_URL: ${{ vars.API_URL }}
+
+      - name: Summarise deployment
+        run: |
+          {
+            echo "### Deployed \`${DEPLOY_SHA:0:7}\` to production"
+            echo ""
+            echo "- Commit: ${DEPLOY_SHA}"
+            echo "- Image: \`${IMAGE}\`"
+            echo "- Cluster: \`${ECS_CLUSTER}\`, service: \`${ECS_SERVICE}\`, revision: \`${NEW_REVISION}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          IMAGE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ env.DEPLOY_SHA }}

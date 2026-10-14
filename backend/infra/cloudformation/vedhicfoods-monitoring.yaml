@@ -1,0 +1,817 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >-
+  Vedhic Foods - CloudWatch alarms and log-derived metrics for the API, the
+  database and the payment/email integrations.
+
+# =============================================================================
+# WHAT AN ALARM IS FOR HERE
+#
+# Every alarm below is justified by a specific, named failure an operator would
+# have to diagnose under time pressure. Alarms that merely restate a threshold
+# ("CPU above 80%") are not included, because they train people to ignore the
+# pager. Where a signal is noisy but worth keeping, it is measured and left for
+# the dashboard rather than paged.
+#
+# Three rules the set follows:
+#
+#   1. TreatMissingData is chosen per alarm, never defaulted. A metric that stops
+#      being published is itself a failure mode: a crashed task emits no error
+#      logs, so an error-rate alarm set to `ignore` sits silent straight through a
+#      total outage. Conversely `breaching` on a request-volume metric would page
+#      every night when the shop is closed, so it is `notBreaching` there.
+#
+#   2. "Error rate" is errors divided by requests. An absolute count fires at 3am
+#      for one 500, and never fires at noon during an outage that has saturated the
+#      rate limiter. The ratio is a composite alarm over two ALB metrics for
+#      exactly this reason.
+#
+#   3. Payment and email failures are alarmed separately from generic errors.
+#      They are the two integrations whose failure is invisible to the customer
+#      until much later (no order confirmation, no delivery notice) and which fail
+#      by logging rather than by throwing.
+#
+# SCOPE NOTE: the load balancer and target group live in vedhicfoods-edge.yaml
+# and the database in vedhicfoods-database.yaml, so their identifiers are
+# PARAMETERS here rather than GetAttrs. Getting one wrong does not break the
+# stack - CloudFormation accepts any string - it silently produces an alarm that
+# never fires. Each parameter below therefore states how to obtain it.
+# =============================================================================
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: Required identifiers }
+        Parameters: [LoadBalancerFullName, TargetGroupFullName, DatabaseInstanceIdentifier]
+      - Label: { default: Log groups }
+        Parameters: [ApplicationLogGroupName, DatabaseLogGroupName]
+      - Label: { default: ECS resources }
+        Parameters: [ClusterName, ServiceName]
+      - Label: { default: Alerting }
+        Parameters: [AlertEmail]
+      - Label: { default: Thresholds }
+        Parameters: [CpuThresholdPercent, MemoryThresholdPercent, ErrorRateThreshold, ErrorMinVolume, LatencyThresholdMs]
+
+Parameters:
+
+  # ---------------------------------------------------------------------------
+  # Required identifiers
+  #
+  # These are the identifiers, not the names or ARNs. CloudWatch metric
+  # Dimensions match on exactly one string form, so a correct ARN here silently
+  # yields a metric that is never published.
+  # ---------------------------------------------------------------------------
+  LoadBalancerFullName:
+    Type: String
+    Default: app/vedhicfoods-api/edg-vedhicfoods-alb
+    Description: >-
+      ALB "LoadBalancer.FullName", as shown on the ALB console. That is
+      app/<name>/<id> - NOT the DNS name and NOT the ARN.
+
+  TargetGroupFullName:
+    Type: String
+    Default: targetgroup/vedhicfoods-api/vedhicfoods-api-tg
+    Description: >-
+      Target group "TargetGroupFullName" from the target group console, in the
+      form targetgroup/<name>/<id>.
+
+  DatabaseInstanceIdentifier:
+    Type: String
+    Default: vedhicfoods
+    Description: >-
+      RDS DBInstanceIdentifier. Must match the database stack's DBName so these
+      alarms measure the instance the application actually uses.
+
+  # ---------------------------------------------------------------------------
+  # Log groups
+  # ---------------------------------------------------------------------------
+  ApplicationLogGroupName:
+    Type: String
+    Default: vedhicfoods/backend
+    Description: >-
+      Log group the ECS tasks write to, matching the value substituted for
+      awslogs-group in the task definition (created by
+      infra/scripts/create-cloudwatch.ps1). If this is wrong, every log-derived
+      metric below matches nothing and the corresponding alarm stays green
+      forever - a wrong value here fails silently, not loudly.
+
+  DatabaseLogGroupName:
+    Type: String
+    Default: /aws/rds/instance/vedhicfoods/postgresql
+    Description: >-
+      PostgreSQL log group. Only meaningful because the database parameter group
+      sets log_min_duration_statement = 500; without it there are no slow-query
+      lines and the slow-query metric is permanently zero, which looks like a
+      healthy database.
+
+  # ---------------------------------------------------------------------------
+  # ECS
+  # ---------------------------------------------------------------------------
+  ClusterName:
+    Type: String
+    Default: vedhicfoods-cluster
+
+  ServiceName:
+    Type: String
+    Default: vedhicfoods-backend
+
+  # ---------------------------------------------------------------------------
+  # Alerting
+  # ---------------------------------------------------------------------------
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: >-
+      Optional address subscribed to the alarms. An unconfirmed subscription is
+      not delivered to, so treat this as a convenience rather than the alerting
+      path. Subscribe the topic itself to PagerDuty or Opsgenie for paging.
+
+  # ---------------------------------------------------------------------------
+  # Thresholds
+  # ---------------------------------------------------------------------------
+  CpuThresholdPercent:
+    Type: Number
+    Default: 80
+    MinValue: 1
+    MaxValue: 100
+    Description: >-
+      Sustained application CPU before the task counts as saturated. Evaluated
+      over 3 consecutive 5-minute periods rather than a single spike, because a
+      checkout burst is legitimately expensive.
+
+  MemoryThresholdPercent:
+    Type: Number
+    Default: 85
+    MinValue: 1
+    MaxValue: 100
+    Description: >-
+      Sustained application memory. On Fargate this is the interesting one:
+      memory cannot be returned to the host, so a task trending upward is a task
+      that will eventually be OOM-killed.
+
+  ErrorRateThreshold:
+    Type: Number
+    Default: 5
+    MinValue: 1
+    Description: >-
+      Percentage of requests returning 5xx over 5 minutes, from the ALB. Set above
+      the single-digit spike a failed deploy's canary requests produce, so a
+      partial rollout is visible without paging.
+
+  ErrorMinVolume:
+    Type: Number
+    Default: 10
+    MinValue: 1
+    Description: >-
+      Minimum 5xx count in the window before the ratio alarm may fire. This is what
+      stops one failed request at 3am waking anyone: 100% of one request is a 100%
+      error rate.
+
+  LatencyThresholdMs:
+    Type: Number
+    Default: 2000
+    MinValue: 100
+    Description: >-
+      p99 target response time from the ALB. Above this, customers are waiting at
+      checkout, and the cause is usually the database - which is why the database
+      CPU and connection alarms share this topic.
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
+
+Resources:
+
+  # ---------------------------------------------------------------------------
+  # Alerting
+  #
+  # One topic for everything. Splitting paging from dashboard-only signals is
+  # handled by which alarms exist, not by multiple topics: a second topic with no
+  # subscriber is a set of alarms nobody is paged for, which is worse than not
+  # having the alarm at all because it looks like coverage.
+  # ---------------------------------------------------------------------------
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-alarms'
+      DisplayName: Vedhic Foods alarms
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+      TopicArn: !Ref AlarmTopic
+
+  # ===========================================================================
+  # LOG-DERIVED METRICS
+  #
+  # The application logs pino JSON, one object per line:
+  #   {"level":"error","time":"...","msg":"Failed to create Razorpay order",...}
+  #
+  # Each filter is anchored on the literal msg field rather than the level alone.
+  # A message rename is a deliberate act a reviewer can see; a metric filter that
+  # silently stops matching produces an alarm that is green precisely because the
+  # failures it exists to catch stopped being counted.
+  # ===========================================================================
+
+  ApplicationErrorMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ApplicationLogGroupName
+      # Any pino line at level error. Deliberately broad: it over-counts errors
+      # the application handles and recovers from, which is why the alarm on it is
+      # an absolute sustained count rather than a rate.
+      FilterPattern: '{ $.level = "error" }'
+      MetricTransformations:
+        - MetricNamespace: VedhicFoods/Application
+          MetricName: Errors
+          MetricValue: '1'
+          DefaultValue: 0
+          Unit: Count
+
+  # --- Payments -------------------------------------------------------------
+  #
+  # Two signals, not one. PaymentFailures is a business outage (nobody can pay).
+  # PaymentSecurityEvents is an attack or a broken integration (signature
+  # mismatches, unverifiable webhooks). Different responders, different urgency -
+  # and the second must not be dismissible as "just a bug".
+  PaymentFailureMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ApplicationLogGroupName
+      # Matched on msg regardless of level: a verification failure is logged as an
+      # error in one path and as an incident record in another, so keying on level
+      # would undercount.
+      FilterPattern: >-
+        { $.msg = "Failed to create Razorpay order" } or
+        { $.msg = "Unable to fetch payment from Razorpay - refusing to confirm" } or
+        { $.msg = "Payment verification failed: the payment is not linked to this order. This incident has been logged." } or
+        { $.msg = "Razorpay settlement does not match the recorded amount - payment rejected" } or
+        { $.msg = "Razorpay webhook processing error" }
+      MetricTransformations:
+        - MetricNamespace: VedhicFoods/Integrations
+          MetricName: PaymentFailures
+          MetricValue: '1'
+          DefaultValue: 0
+          Unit: Count
+
+  PaymentSecurityMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ApplicationLogGroupName
+      FilterPattern: >-
+        { $.msg = "Razorpay signature length mismatch - possible tampering attempt" } or
+        { $.msg = "Razorpay payment signature verification FAILED - invalid signature" } or
+        { $.msg = "Razorpay webhook signature verification failed - rejecting webhook" } or
+        { $.msg = "Razorpay webhook received without signature header" } or
+        { $.msg = "Razorpay webhook received without a capturable raw body" }
+      MetricTransformations:
+        - MetricNamespace: VedhicFoods/Integrations
+          MetricName: PaymentSecurityEvents
+          MetricValue: '1'
+          DefaultValue: 0
+          Unit: Count
+
+  # --- Email ----------------------------------------------------------------
+  #
+  # Terminal and retryable failures are counted separately. Only the terminal
+  # count is paged: the customer never receives the order confirmation and nothing
+  # retries it, so the failure is invisible from the customer's side unless
+  # something alerts on it. Retry attempts are measured but not alarmed on,
+  # because a provider blip retries and succeeds - paging on that would be noise.
+  EmailTerminalFailureMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ApplicationLogGroupName
+      FilterPattern: '{ $.msg = "Email failed after max retries" }'
+      MetricTransformations:
+        - MetricNamespace: VedhicFoods/Integrations
+          MetricName: EmailTerminalFailures
+          MetricValue: '1'
+          DefaultValue: 0
+          Unit: Count
+
+  EmailAttemptFailureMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ApplicationLogGroupName
+      FilterPattern: '{ $.msg = "Email attempt * failed" } or { $.msg = "Send attempt * failed" }'
+      MetricTransformations:
+        - MetricNamespace: VedhicFoods/Integrations
+          MetricName: EmailAttemptFailures
+          MetricValue: '1'
+          DefaultValue: 0
+          Unit: Count
+
+  # --- Database -------------------------------------------------------------
+  DatabaseSlowQueryMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref DatabaseLogGroupName
+      # postgres emits e.g.
+      #   2026-01-01 00:00:00 UTC [123] LOG:  duration: 812.345 ms  statement: SELECT ...
+      FilterPattern: '?LOG ?[0-9]+ ?duration: [0-9]{3,}'
+      MetricTransformations:
+        - MetricNamespace: VedhicFoods/Database
+          MetricName: SlowQueries
+          MetricValue: '1'
+          DefaultValue: 0
+          Unit: Count
+
+  DatabaseErrorTextMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref DatabaseLogGroupName
+      # PostgreSQL logs are plain text, not JSON, so this is a term filter rather
+      # than a JSON filter:
+      #   2026-01-01 00:00:00 UTC [123] ERROR:  relation "Order" does not exist
+      FilterPattern: '" ERROR: "'
+      MetricTransformations:
+        - MetricNamespace: VedhicFoods/Database
+          MetricName: DatabaseErrors
+          MetricValue: '1'
+          DefaultValue: 0
+          Unit: Count
+
+  # ===========================================================================
+  # ALARMS - AVAILABILITY
+  #
+  # Placed first because it is the alarm that has to work when nothing else does.
+  # Every other application alarm here measures a failure being *reported*; a
+  # process that never starts reports nothing, so those would all stay green
+  # through a total outage.
+  # ===========================================================================
+  HealthyHostAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-no-healthy-targets'
+      AlarmDescription: >-
+        Fewer than 1 healthy target for 5 minutes. This is the outage alarm: it
+        fires when the service cannot serve anyone, including when every task
+        crashed on start.
+      Namespace: AWS/ApplicationELB
+      MetricName: HealthyHostCount
+      Dimensions:
+        - Name: TargetGroup
+          Value: !Ref TargetGroupFullName
+        - Name: LoadBalancer
+          Value: !Ref LoadBalancerFullName
+      Statistic: Minimum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      # breaching, not ignore: no healthy host means no metrics are being
+      # published at all, and `ignore` would read that silence as "all clear".
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  # ===========================================================================
+  # ALARMS - ERROR RATE
+  #
+  # A composite alarm, because a percentage of an absolute count is the only form
+  # that behaves at both low and high volume. The division is guarded by the
+  # explicit request-count term: with zero requests the ratio is NaN, and a metric
+  # full of NaN evaluates as *missing*, which under `breaching` would page every
+  # night when the shop is closed.
+  # ===========================================================================
+  ErrorRatioAlarm:
+    # A math-expression alarm, NOT a CompositeAlarm. CompositeAlarm can only
+    # combine the STATES of other alarms, so it cannot divide one metric by
+    # another - and CloudFormation's CompositeAlarm has no `Metrics` property
+    # at all (that exists only on the CloudWatch API). `AWS::CloudWatch::Alarm`
+    # does support `Metrics`, which is the correct construct for a ratio.
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-error-ratio'
+      AlarmDescription: >-
+        5xx responses above the configured percentage of requests, over a
+        5-minute window, AND at least the configured minimum count. The volume
+        floor is what makes a single failed request at 3am harmless while still
+        catching a genuine outage at noon.
+      # Both guards are inside the expression rather than being a second alarm,
+      # because a composite alarm cannot see metrics - only alarm states - and
+      # splitting this into two alarms would page twice for one incident.
+      #
+      # `requests > 0` is required, not decorative: at zero traffic the division
+      # is undefined and the metric alarm sits in INSUFFICIENT_DATA forever.
+      # The `IF` returns 0 (breachless) in both disabled cases, so the alarm stays
+      # OK rather than flapping on missing data.
+      Metrics:
+        - Id: e5xx
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApplicationELB
+              MetricName: HTTPCode_Target_5XX_Count
+              Dimensions:
+                - Name: LoadBalancer
+                  Value: !Ref LoadBalancerFullName
+            Period: 300
+            Stat: Sum
+        - Id: elb5xx
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApplicationELB
+              MetricName: HTTPCode_ELB_5XX_Count
+              Dimensions:
+                - Name: LoadBalancer
+                  Value: !Ref LoadBalancerFullName
+            Period: 300
+            Stat: Sum
+        - Id: requests
+          ReturnData: false
+          MetricStat:
+            Metric:
+              Namespace: AWS/ApplicationELB
+              MetricName: RequestCount
+              Dimensions:
+                - Name: LoadBalancer
+                  Value: !Ref LoadBalancerFullName
+            Period: 300
+            Stat: Sum
+        - Id: errors
+          # ELB-generated 5xx (no healthy target, malformed request) and
+          # target-generated 5xx (the application erroring) are different
+          # failures with different fixes, so both count toward the ratio.
+          Expression: e5xx + elb5xx
+          Label: Total 5xx
+          ReturnData: false
+        - Id: ratio
+          Expression: !Sub >-
+            IF(requests > 0 AND errors >= ${ErrorMinVolume},
+               (errors / requests) * 100,
+               0)
+          Label: 5xx percentage
+          # Only this one reaches the alarm's threshold check.
+          ReturnData: true
+      Threshold: !Ref ErrorRateThreshold
+      ComparisonOperator: GreaterThanThreshold
+      # No top-level Period: with `Metrics` it belongs to each MetricStat, and
+      # specifying both is rejected.
+      #
+      # 1 breaching datapoint out of 2 windows. Fires on the first bad window
+      # (a real outage should page immediately) but needs a second bad window to
+      # stay there, so one quiet window does not clear a fire.
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 1
+      # The whole point is to ignore windows with no traffic, so missing data is
+      # never treated as a breach.
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  # ===========================================================================
+  # ALARMS - APPLICATION
+  # ===========================================================================
+
+  # Absolute sustained count, not a rate. This catches a *partial* failure of one
+  # feature - all payments failing, one module broken - that a site-wide ratio
+  # would dilute below its threshold, because most traffic still succeeds.
+  ApplicationErrorSpikeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-app-error-spike'
+      AlarmDescription: >-
+        25 or more application errors per minute, in 3 of 5 minutes. Sustained
+        rather than instantaneous: a single bad request during a deploy is not an
+        incident.
+      Namespace: VedhicFoods/Application
+      MetricName: Errors
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 5
+      DatapointsToAlarm: 3
+      Threshold: 25
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  PaymentFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-payment-failures'
+      AlarmDescription: >-
+        3 or more payment failures in 10 minutes. The threshold is deliberately
+        tiny because a storefront may process only a handful of orders an hour -
+        three failures is then already a large share of attempted payments, and the
+        customer impact is total (nobody can check out) even though the volume is
+        small. The 10-minute window tolerates one retry.
+      Namespace: VedhicFoods/Integrations
+      MetricName: PaymentFailures
+      Statistic: Sum
+      Period: 600
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  PaymentSecurityAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-payment-security'
+      AlarmDescription: >-
+        A single signature or webhook anomaly. Threshold 1, not 5: this is not a
+        rate of business failure but evidence that something is probing the payment
+        endpoint, and one occurrence is enough to investigate.
+      Namespace: VedhicFoods/Integrations
+      MetricName: PaymentSecurityEvents
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  EmailFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-email-failures'
+      AlarmDescription: >-
+        2 or more emails that exhausted all retries in 15 minutes. This is a silent
+        failure from the customer's point of view - no order confirmation, no
+        delivery notice - yet the order exists in the database, so nothing
+        downstream notices. Two in 15 minutes is past "one bad recipient address".
+      Namespace: VedhicFoods/Integrations
+      MetricName: EmailTerminalFailures
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 2
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  # ===========================================================================
+  # ALARMS - RESOURCE
+  # ===========================================================================
+
+  CpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-ecs-cpu'
+      AlarmDescription: >-
+        CPU above threshold for 15 consecutive minutes. Long evaluation on
+        purpose: ECS replaces a saturated task and the replacement is just as
+        saturated, so the useful signal is sustained pressure, not a spike.
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ClusterName
+        - Name: ServiceName
+          Value: !Ref ServiceName
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: !Ref CpuThresholdPercent
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  MemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-ecs-memory'
+      AlarmDescription: >-
+        Memory above threshold for 15 minutes. Fargate cannot return memory to
+        the host, so a task at high utilisation is one that will be OOM-killed;
+        this is for investigation during business hours rather than a 3am page,
+        since ECS replaces the task and the service stays up.
+      Namespace: AWS/ECS
+      MetricName: MemoryUtilization
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ClusterName
+        - Name: ServiceName
+          Value: !Ref ServiceName
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: !Ref MemoryThresholdPercent
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  LatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-alb-latency-p99'
+      AlarmDescription: >-
+        p99 target response time above threshold for 10 minutes. Almost always the
+        database rather than the application, so it shares a topic with the
+        database CPU and connection alarms to point at the right system.
+      Namespace: AWS/ApplicationELB
+      MetricName: TargetResponseTime
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Ref LoadBalancerFullName
+        - Name: TargetGroup
+          Value: !Ref TargetGroupFullName
+      ExtendedStatistic: p99
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: !Ref LatencyThresholdMs
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  # ===========================================================================
+  # ALARMS - DATABASE
+  # ===========================================================================
+
+  DatabaseCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-rds-cpu'
+      AlarmDescription: >-
+        Database CPU above 90% for 15 minutes. A higher threshold than the
+        application's, because a database at 80% is normal for a busy shop - it is
+        the sustained near-saturation that means queries need optimising or the
+        instance needs more capacity.
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DatabaseInstanceIdentifier
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 90
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  DatabaseStorageAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-rds-low-storage'
+      AlarmDescription: >-
+        Free storage below 10 GiB for 10 minutes - roughly 20% of the default
+        50 GiB instance. Fires early on purpose: at 10% remaining, writes start
+        failing and the real fix is a restore into a larger instance, which takes
+        hours. Storage autoscaling is enabled on the instance, but it needs
+        headroom to grow into.
+      Namespace: AWS/RDS
+      MetricName: FreeStorageSpace
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DatabaseInstanceIdentifier
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10737418240
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  # The resource that actually runs out first on a small instance. max_connections
+  # is 200 in the database parameter group, so 160 is 80% of the ceiling - high
+  # enough to catch a leaking pool, low enough to leave room to diagnose.
+  DatabaseConnectionsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-rds-connections'
+      AlarmDescription: >-
+        Connections above 160 of a 200 limit, for 10 minutes. A connection leak
+        presents as checkout timeouts while every other metric looks healthy, and
+        the application pool cannot grow past this ceiling, so the alarm fires
+        early enough to fix before checkouts actually fail.
+      Namespace: AWS/RDS
+      MetricName: DatabaseConnections
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DatabaseInstanceIdentifier
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 160
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  DatabaseIoLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-rds-io-latency'
+      AlarmDescription: >-
+        Write latency above 100 ms for 10 minutes. Points at the storage layer
+        rather than the query layer, which is what separates "the disk is slow"
+        from "the query is slow" - two problems with different fixes.
+      Namespace: AWS/RDS
+      MetricName: WriteLatency
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DatabaseInstanceIdentifier
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 0.1
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  # With MultiAZ, the standby must promote within its failover window. If it does
+  # not, a failover takes as long as the instance timeout - and the storefront is
+  # down for all of it.
+  DatabaseFailoverAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-rds-failover'
+      AlarmDescription: >-
+        A MultiAZ failover has occurred. This reports an AZ-level problem that has
+        already taken the primary offline, rather than leaving it to be discovered
+        from customer complaints.
+      Namespace: AWS/RDS
+      MetricName: FailoverCount
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref DatabaseInstanceIdentifier
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  DatabaseSlowQueryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-rds-slow-queries'
+      AlarmDescription: >-
+        More than 20 queries slower than 500 ms in 15 minutes. Not paging-worthy
+        alone, but it is the early warning that tends to precede a latency or CPU
+        alarm by hours, so it exists to be looked at during the day.
+      Namespace: VedhicFoods/Database
+      MetricName: SlowQueries
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 20
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+  DatabaseErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-rds-errors'
+      AlarmDescription: >-
+        PostgreSQL logged an ERROR or worse in 10 minutes. Restarts, constraint
+        violations and out-of-memory kills all surface here, making this the signal
+        for a database problem that has not yet reached the application.
+      Namespace: VedhicFoods/Database
+      MetricName: DatabaseErrors
+      Statistic: Sum
+      Period: 600
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+      InsufficientDataActions: [!Ref AlarmTopic]
+
+Outputs:
+  AlarmTopicArn:
+    Description: Subscribe PagerDuty, Opsgenie or a chat webhook to this topic.
+    Value: !Ref AlarmTopic
+    Export:
+      Name: !Sub '${AWS::StackName}-alarm-topic'
+
+  AlarmTopicName:
+    Value: !Ref AlarmTopic

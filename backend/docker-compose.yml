@@ -1,0 +1,132 @@
+# ==============================================================================
+# Vedhic Foods — backend stack
+#
+# SECURITY NOTES (all of these were real defects in the previous revision):
+#
+#  1. `JWT_SECRET_KEY` / `SECRET_KEY` were set here, but the application reads
+#     `JWT_SECRET`. The variable was therefore ignored and Zod's fallback — the
+#     literal constant published in `src/config/env.ts` — became the signing
+#     key. Anyone with repository read access could mint an ADMIN access token.
+#     The variable names below now match `src/config/env.ts` exactly.
+#
+#  2. `FLASK_ENV: production` was a leftover from a previous Python service.
+#     This is an Express/TypeScript app that reads `NODE_ENV`, so the process
+#     silently ran as `development`: verbose error messages, disabled
+#     production secret validation, relaxed CORS handling.
+#
+#  3. The database password was committed in plaintext.
+#
+#  4. Postgres was published on all host interfaces via `5432:5432`.
+#
+# Every secret below is sourced from the host environment or a .env file that is
+# git-ignored. Nothing sensitive belongs in this file.
+# ==============================================================================
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: vedhifoods-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:-vedhicfoods}
+    # Bound to loopback only. `5432:5432` would listen on every host interface
+    # and expose the database to the network.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vedhi_admin} -d ${POSTGRES_DB:-vedhicfoods}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+  api:
+    # Build context is the monorepo ROOT: the backend depends on the
+    # `vedhicfoods-database` workspace package, which npm links through the root
+    # node_modules. `build: .` (backend as context) cannot resolve it.
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: vedhicfoods-backend:latest
+    container_name: vedhifoods-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # Explicit, so a missing .env entry cannot silently downgrade the process
+      # to development mode.
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: 5000
+
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vedhicfoods}
+
+      # Names must match src/config/env.ts.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
+
+      FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL must be set}
+      ADMIN_FRONTEND_URL: ${ADMIN_FRONTEND_URL:?ADMIN_FRONTEND_URL must be set}
+
+      AWS_REGION: ${AWS_REGION:-ap-south-1}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-}
+      # Prefer an IAM task/instance role. Static keys are accepted only as a
+      # local-development fallback and are omitted here when unset.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:?RAZORPAY_WEBHOOK_SECRET must be set}
+
+      BREVO_API_KEY: ${BREVO_API_KEY:-}
+
+      # Shared rate-limit store (see the `redis` service below).
+      REDIS_URL: redis://redis:6379
+
+      # Graceful-shutdown budget. Must stay below the orchestrator's termination
+      # grace period (`stop_grace_period` / ECS `stopTimeout`).
+      SHUTDOWN_GRACE_MS: ${SHUTDOWN_GRACE_MS:-25000}
+
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      # Loopback only. In a real deployment this service sits behind an ALB /
+      # CloudFront that terminates TLS; do not expose the Node port directly.
+      - "127.0.0.1:5000:5000"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Graceful shutdown must outlast the orchestrator's kill timer, otherwise
+    # in-flight checkouts are killed mid-request during `docker compose down`.
+    # Keep this >= SHUTDOWN_GRACE_MS (default 25000) + margin.
+    stop_grace_period: 40s
+
+  # Single Redis for the shared rate-limit store. Without it the app falls back
+  # to a per-process store, which multiplies every limit by the container count.
+  # Rate limiting does NOT fail closed under compose: this is local development.
+  redis:
+    image: redis:7-alpine
+    container_name: vedhifoods-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  pgdata:

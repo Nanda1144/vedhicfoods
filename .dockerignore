@@ -1,0 +1,81 @@
+# =============================================================================
+# Root .dockerignore
+#
+# The backend image is built with the MONOREPO ROOT as context
+# (`docker build -f backend/Dockerfile .`), so this file - not
+# `backend/.dockerignore` - is what governs what enters the build.
+#
+# The most important rule below is `.env*`. There are five real .env files in
+# this repository (backend, database, frontend, admin) holding live
+# credentials. A root-context build that copies them would publish production
+# secrets into a public ECR repository, where they survive even if the image is
+# later deleted. Secrets are injected at runtime from AWS Secrets Manager
+# instead - see backend/AWS_DEPLOYMENT.md.
+# =============================================================================
+
+# --- Secrets: never bake credentials into an image -------------------------
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# --- Dependencies (installed inside the image, never copied) ---------------
+node_modules
+**/node_modules
+.npm
+
+# --- Build output (rebuilt inside the image) --------------------------------
+dist
+**/dist
+build
+**/build
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# --- VCS --------------------------------------------------------------------
+.git
+.gitignore
+.github
+**/.git
+
+# --- Tests and coverage -----------------------------------------------------
+tests
+**/tests
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+coverage
+**/coverage
+
+# --- Frontend / admin (separate images; never needed by the backend) --------
+frontend
+admin
+
+# --- Docs, scripts and local artefacts --------------------------------------
+*.md
+!**/README.md
+*.log
+**/*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# --- Legacy Python backend leftovers (unused; see .dockerignore in backend) -
+python_archive
+.venv
+instance
+uploads
+
+# --- Nested lockfiles that can disagree with the root workspace lockfile ----
+backend/package-lock.json
+database/package-lock.json
+
+# --- Docker-in-Docker -------------------------------------------------------
+Dockerfile
+**/Dockerfile
+.dockerignore
+**/.dockerignore
+docker-compose*.yml

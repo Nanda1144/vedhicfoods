@@ -1,7 +1,12 @@
 .env
 .env.*
 !.env.example
+# Per-environment templates (.env.development.example, .env.staging.example, …).
+# Without this negation the pattern above also ignores the examples, and the
+# environment split silently stops being documented in the repository.
+!.env.*.example
 venv/
+.venv/
 env/
 ENV/
 __pycache__/

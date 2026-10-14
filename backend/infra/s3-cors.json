@@ -1,0 +1,44 @@
+[
+  {
+    "_README": [
+      "CORS for direct browser -> S3 uploads (product images) and invoice downloads.",
+      "",
+      "REQUIRED because the browser uploads product images straight to S3 using a",
+      "presigned PUT URL. A presigned URL authorises the HTTP request, but the",
+      "browser still enforces CORS on the RESPONSE - without this rule the upload",
+      "succeeds server-side and the page then fails to read the result.",
+      "",
+      "ALLOWED_ORIGINS MUST NOT BE \"*\". A wildcard is rejected for requests that",
+      "carry credentials, and combined with presigned URLs it would let any site",
+      "cause authenticated uploads against this bucket.",
+      "",
+      "ALLOWED_METHODS is PUT and GET only: the browser never needs POST or DELETE.",
+      "",
+      "AllowedHeaders must include the headers the app signs into the presigned",
+      "request. Content-Type is signed (S3Service signs ContentType), so omitting it",
+      "here produces SignatureDoesNotMatch even though the URL is valid.",
+      "",
+      "ExposeHeaders must include ETag if the client ever needs it after upload.",
+
+      "ALLOWED_ORIGINS below MUST match FRONTEND_URL and ADMIN_FRONTEND_URL in",
+      "infra/ecs-task-definition.json exactly. This rule is what lets the ADMIN",
+      "portal upload product images: it is the admin origin, not the storefront",
+      "origin, that calls generatePresignedUploadUrl. Omitting admin.vedhicfoods.com",
+      "here makes image upload fail in the browser while succeeding server-side —",
+      "the PUT returns 200 and the page still cannot read the response.",
+      "",
+      "These are plain hostnames, not origins with a scheme: S3 AllowedOrigins",
+      "rejects a value containing \"https://\" and the whole put-bucket-cors call",
+      "fails with MalformedXML."
+    ],
+    "AllowedOrigins": [
+      "vedhicfoods.com",
+      "www.vedhicfoods.com",
+      "admin.vedhicfoods.com"
+    ],
+    "AllowedMethods": ["PUT", "GET"],
+    "AllowedHeaders": ["Content-Type", "x-amz-*", "Content-Length"],
+    "ExposeHeaders": ["ETag", "x-amz-request-id"],
+    "MaxAgeSeconds": 3600
+  }
+]

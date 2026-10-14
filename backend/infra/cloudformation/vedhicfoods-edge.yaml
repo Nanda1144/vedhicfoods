@@ -1,0 +1,493 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >-
+  Vedhic Foods production edge: ACM certificate, internet-facing Application
+  Load Balancer, HTTPS-only listener, HTTP->HTTPS redirect, API target group and
+  the Route 53 alias for api.vedhicfoods.com.
+
+# ===========================================================================
+# SCOPE — read this before deploying
+# ===========================================================================
+#
+# This stack owns ONLY the API edge. It deliberately does not create:
+#
+#   * The ECS cluster, service or task definition (backend/infra/ecs-task-definition.json)
+#   * The Route 53 hosted zone (it already exists; pass its ID in)
+#   * RDS, ElastiCache Redis, S3, SES (managed outside this stack)
+#   * The storefront and admin static hosting
+#
+# The storefront (vedhicfoods.com) and admin portal (admin.vedhicfoods.com) are
+# NOT fronted by this load balancer. They are static SPAs and are served by
+# whichever CDN you host them on; they only need a CORS origin pointing at this
+# ALB's hostname. See PRODUCTION_RUNBOOK.md for that split.
+#
+# ===========================================================================
+# WHY THE API GETS ITS OWN CERTIFICATE RATHER THAN A WILDCARD
+# ===========================================================================
+#
+# A `*.vedhicfoods.com` certificate would also validate `api.vedhicfoods.com`,
+# but it would equally validate every other name under the domain. That widens the
+# blast radius of any dangling-CNAME / subdomain-takeover issue in DNS, and the
+# API hostname has no need of the extra names. So the certificate below covers
+# exactly one name. Add SANs deliberately via ApiDomainNames if you later move the
+# API onto another name; do not reach for a wildcard by default.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Domain & DNS
+        Parameters:
+          - HostedZoneId
+          - ApiDomainName
+      - Label:
+          default: Load balancer
+        Parameters:
+          - PublicSubnetIds
+          - VpcId
+          - CertificateArn
+          - SecurityGroupId
+          - TaskSecurityGroupId
+          - ContainerPort
+          - HealthCheckPath
+          - SslPolicy
+          - AllowedCidr
+          - LogBucketName
+      - Label:
+          default: Idle timeouts (must agree with the backend)
+        Parameters:
+          - AlbIdleTimeoutSeconds
+          - DeregistrationDelaySeconds
+
+Parameters:
+
+  # -------------------------------------------------------------------------
+  # Domain & DNS
+  # -------------------------------------------------------------------------
+  HostedZoneId:
+    Type: String
+    Description: >-
+      Route 53 hosted zone ID for vedhicfoods.com (NOT the domain name). Find it
+      with: aws route53 list-hosted-zones-by-name --dns-name vedhicfoods.com.
+      The zone must already exist — this stack creates records inside it, not the
+      zone, so a typo fails the deployment instead of silently creating a
+      duplicate zone that never receives queries.
+    AllowedPattern: '^[A-Z0-9]+$'
+    ConstraintDescription: must be a Route 53 hosted zone ID such as Z1D633PJN98FT9.
+
+  ApiDomainName:
+    Type: String
+    Default: api.vedhicfoods.com
+    Description: >-
+      Hostname the API is served on. This is the origin the frontend's
+      VITE_API_URL points at and the host the certificate is issued for.
+    AllowedPattern: '^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))+$'
+    ConstraintDescription: must be a fully qualified domain name, no scheme, no port.
+
+  # -------------------------------------------------------------------------
+  # Network
+  # -------------------------------------------------------------------------
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC the public subnets belong to.
+
+  PublicSubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: >-
+      At least two subnets in DIFFERENT availability zones. A single-AZ ALB
+      silently loses all capacity during an AZ failure, which is the single
+      cheapest availability mistake to avoid.
+
+  # -------------------------------------------------------------------------
+  # Security groups
+  # -------------------------------------------------------------------------
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: >-
+      An EXISTING security group to attach to the load balancer, or leave empty to
+      let this stack create one. Passing your own lets you keep network changes
+      inside one reviewed file instead of two.
+
+  TaskSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: >-
+      EXISTING security group attached to the ECS tasks. The load balancer is
+      given ingress on the container port *from this group only*, so port 5000
+      stays unreachable from the internet even if a task is assigned a public IP
+      by mistake.
+
+  # -------------------------------------------------------------------------
+  # Certificate
+  # -------------------------------------------------------------------------
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: >-
+      EXISTING ACM certificate ARN for ApiDomainName in this region, or leave empty
+      to have this stack request one. Passing an existing ARN is how you stage a
+      re-issue without downtime: issue the replacement first, then swap it in here.
+
+  SslPolicy:
+    Type: String
+    Default: ELBSecurityPolicy-TLS13-1-2-2021-06
+    Description: >-
+      TLS policy for the HTTPS listener. The default requires TLS 1.2 or 1.3 and
+      drops every legacy cipher. Note AWS::ElasticLoadBalancingV2::Listener
+      cannot downgrade this to plain TLS 1.2 — if you must support a very old
+      client, set the policy on the certificate's domain instead and accept the
+      exposure.
+    AllowedValues:
+      - ELBSecurityPolicy-TLS13-1-2-2021-06
+      - ELBSecurityPolicy-TLS13-1-2-RES-2021-06
+      - ELBSecurityPolicy-TLS13-1-1-2022-06
+      - ELBSecurityPolicy-2021-06
+      - ELBSecurityPolicy-FIPS
+      - ELBSecurityPolicy-2016-08
+
+  # -------------------------------------------------------------------------
+  # Listener exposure
+  # -------------------------------------------------------------------------
+  AllowedCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: >-
+      CIDR permitted to reach the HTTPS listener. The default is the whole
+      internet, which is correct for a public storefront API. Narrow it only if
+      you are deliberately restricting a partner integration.
+
+  # -------------------------------------------------------------------------
+  # Backend wiring
+  # -------------------------------------------------------------------------
+  ContainerPort:
+    Type: Number
+    Default: 5000
+    Description: >-
+      Container port. Must match PORT in the ECS task definition and the
+      containerDefinitions portMapping — three places that must agree or the target
+      group health check fails for a reason that looks like a broken app.
+    MinValue: 1
+    MaxValue: 65535
+
+  HealthCheckPath:
+    Type: String
+    Default: /api/v1/health/ready
+    Description: >-
+      Target group health check path. Readiness (not liveness) on purpose: a
+      database blip should remove a task from rotation without restarting it,
+      whereas liveness would have ECS kill a perfectly healthy process that simply
+      cannot reach PostgreSQL for a moment.
+
+  # -------------------------------------------------------------------------
+  # Timeouts — these are not cosmetic
+  # -------------------------------------------------------------------------
+  AlbIdleTimeoutSeconds:
+    Type: Number
+    Default: 120
+    MinValue: 60
+    MaxValue: 4000
+    Description: >-
+      ALB idle timeout. MUST exceed the backend's KEEP_ALIVE_TIMEOUT_MS (65s).
+      The AWS default is 60s, which is LOWER than 65s: the proxy then tears down
+      idle keep-alive sockets the server was still willing to reuse, and the
+      customer sees a 502 on a request that never ran. 120s gives real headroom.
+
+  DeregistrationDelaySeconds:
+    Type: Number
+    Default: 90
+    MinValue: 0
+    MaxValue: 3600
+    Description: >-
+      How long the ALB keeps sending traffic to a task that is being replaced.
+      Must exceed the backend's SHUTDOWN_GRACE_MS (25s) so a rolling deploy drains
+      in-flight checkouts instead of cutting them off. Also covers the ECS
+      stopTimeout (60s), so a task that ignores SIGTERM still loses no requests.
+
+  LogBucketName:
+    Type: String
+    Default: ''
+    Description: >-
+      EXISTING private S3 bucket name for ALB access logs, or leave empty to
+      disable them. Enabling them costs nothing and is the only way to attribute a
+      request to a client IP after the fact, which matters for a payments endpoint.
+
+Conditions:
+  CreateCertificate: !Equals [!Ref CertificateArn, '']
+  CreateLoadBalancerSecurityGroup: !Equals [!Ref SecurityGroupId, '']
+  EnableAccessLogs: !Not [!Equals [!Ref LogBucketName, '']]
+
+Resources:
+
+  # =========================================================================
+  # ACM
+  # =========================================================================
+  ApiCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: CreateCertificate
+    Properties:
+      DomainName: !Ref ApiDomainName
+      ValidationMethod: DNS
+      # Naming HostedZoneId explicitly is what makes CloudFormation create the
+      # validation CNAME in YOUR zone rather than in whatever zone it guesses.
+      # Without it a cross-account or externally-registered domain leaves the
+      # certificate stuck in PENDING_VALIDATION, which reads exactly like a
+      # networking fault and is not one.
+      #
+      # If the stack completes but the certificate stays PENDING_VALIDATION, the
+      # zone was not visible to this account. Add the CNAME by hand — see the DNS
+      # table in PRODUCTION_RUNBOOK.md — and the certificate issues on its own.
+      DomainValidationOptions:
+        - DomainName: !Ref ApiDomainName
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Project
+          Value: vedhicfoods
+        - Key: Component
+          Value: edge
+        - Key: Environment
+          Value: production
+
+  # =========================================================================
+  # Load balancer
+  # =========================================================================
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: CreateLoadBalancerSecurityGroup
+    Properties:
+      GroupDescription: >-
+        Vedhic Foods production ALB - HTTPS from the internet only, container port
+        reachable only from the ECS task security group.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref AllowedCidr
+          Description: HTTPS from customers and the storefront. TLS terminates here.
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref AllowedCidr
+          Description: >-
+            Plain HTTP exists ONLY to be redirected to HTTPS. Nothing is served on
+            this port. Remove it once you are sure nothing links to http:// URLs.
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          DestinationSecurityGroupId: !Ref TaskSecurityGroupId
+          Description: Forward to the ECS tasks only.
+      Tags:
+        - Key: Project
+          Value: vedhicfoods
+        - Key: Environment
+          Value: production
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: vedhicfoods-api
+      Scheme: internet-facing
+      Type: application
+      IpAddressType: ipv4
+      Subnets: !Ref PublicSubnetIds
+      SecurityGroups: !If
+        - CreateLoadBalancerSecurityGroup
+        - [!Ref 'AWS::NoValue', !Ref LoadBalancerSecurityGroup]
+        - [!Ref SecurityGroupId]
+      # `routing.http2.enabled` stays on: it is what lets a browser reuse one
+      # connection for the SPA's many parallel API calls.
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: !Ref AlbIdleTimeoutSeconds
+        - Key: routing.http2.enabled
+          Value: 'true'
+        - Key: routing.http.drop_invalid_header_fields
+          Value: 'true'
+        # Blocks the HTTP/2 rapid-reset class of DoS (CVE-2023-44487).
+        - Key: routing.http2.preserve_streams_per_connection
+          Value: 'true'
+        # Stops a stray `aws elbv2 delete-load-balancer` from taking production
+        # offline. Disable deliberately, with a reason, when you need it.
+        - Key: deletion_protection.enabled
+          Value: 'true'
+        - Key: load_balancing.cross_zone.enabled
+          Value: 'true'
+        - Key: access_logs.s3.enabled
+          Value: !If [EnableAccessLogs, 'true', 'false']
+        - Key: access_logs.s3.bucket
+          Value: !If [EnableAccessLogs, !Ref LogBucketName, !Ref 'AWS::NoValue']
+        - Key: access_logs.s3.prefix
+          Value: !If [EnableAccessLogs, 'alb/api', !Ref 'AWS::NoValue']
+      Tags:
+        - Key: Project
+          Value: vedhicfoods
+        - Key: Component
+          Value: edge
+        - Key: Environment
+          Value: production
+
+  # =========================================================================
+  # Target group
+  # =========================================================================
+  ApiTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: vedhicfoods-api-tg
+      VpcId: !Ref VpcId
+      Port: !Ref ContainerPort
+      Protocol: HTTP
+      # awsvpc mode: ECS registers the task's private IP directly. There is no
+      # instance to register, and there is also no host port, so nothing is bound
+      # to a public interface.
+      TargetType: ip
+      HealthCheckEnabled: true
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: traffic-port
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      # 2 consecutive successes before traffic is routed. A single green check
+      # would route to a task whose database connection is still coming up.
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+      TargetGroupAttributes:
+        # Set via the attribute, not the DeregistrationDelay property. CloudFormation
+        # rejects a template that sets both, because they write the same attribute.
+        - Key: deregistration_delay.timeout_seconds
+          Value: !Ref DeregistrationDelaySeconds
+      Tags:
+        - Key: Project
+          Value: vedhicfoods
+        - Key: Environment
+          Value: production
+
+  # =========================================================================
+  # Listeners
+  # =========================================================================
+  # HTTP: redirect, never serve. 301 rather than 308 because some corporate
+  # proxies and older mobile browsers mishandle 308, and a failed redirect on a
+  # payments flow costs a real order.
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig:
+            Protocol: HTTPS
+            Port: '443'
+            StatusCode: HTTP_301
+      Tags:
+        - Key: Project
+          Value: vedhicfoods
+
+  # HTTPS: the only port that serves content.
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: !Ref SslPolicy
+      Certificates:
+        - CertificateArn: !If
+            - CreateCertificate
+            - !Ref ApiCertificate
+            - !Ref CertificateArn
+      # Default action is a bare 404, NOT a forward to the API. Only the explicit
+      # rule below reaches the backend, so https://api.vedhicfoods.com/ returns
+      # nothing useful instead of advertising the API's route table to anyone who
+      # points a browser at the hostname.
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            ContentType: text/plain
+            MessageBody: Not Found
+            StatusCode: '404'
+      Tags:
+        - Key: Project
+          Value: vedhicfoods
+
+  # Everything the app actually serves lives under /api. The webhook
+  # (/api/v1/payments/webhook) and the health endpoints are inside it too.
+  # =========================================================================
+  # DNS
+  # =========================================================================
+  # A Route 53 alias, not a CNAME and not the ALB's DNS name. An A record
+  # pointing at the ELB hostname doubles DNS resolution and is capped at 32
+  # aliases; an A record to the raw ALB IP addresses is impossible because they
+  # change. Alias A + AAAA is the only correct form.
+  #
+  # This creates ONE record (api). It does not touch the apex, www or admin -
+  # those belong to the frontend CDN and are documented in PRODUCTION_RUNBOOK.md.
+  ApiAliasRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref ApiDomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt LoadBalancer.DNSName
+        # Same all-cap attribute name as the output above. Route 53 needs the
+        # ALB's OWN hosted zone here, not the HostedZoneId of the record.
+        HostedZoneId: !GetAtt LoadBalancer.CanonicalHostedZoneID
+        EvaluateTargetHealth: false
+      # No TTL: an alias to a regional resource does not carry one.
+      #
+      # No AAAA record, because the load balancer above is created with
+      # `IpAddressType: ipv4`. Publishing an AAAA for an IPv4-only ALB resolves to
+      # nothing useful and, on networks with broken IPv6, sends customers down a
+      # path that cannot complete. To go dual-stack: register an IPv6 CIDR on the
+      # subnets, set `IpAddressType: dualstack` here, then add a second RecordSet
+      # with Type: AAAA and the identical AliasTarget.
+
+  ApiPathRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      ListenerArn: !Ref HttpsListener
+      Priority: 10
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - /api/*
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref ApiTargetGroup
+          Order: 1
+
+Outputs:
+  ApiHostname:
+    Description: >-
+      Hostname to put in the frontend's VITE_API_URL and in the CORS allowlist
+      (FRONTEND_URL / ADMIN_FRONTEND_URL are the STORE origins, not this one).
+    Value: !Ref ApiDomainName
+
+  ApiUrl:
+    Description: Base URL including the version prefix used by the frontend.
+    Value: !Sub 'https://${ApiDomainName}/api/v1'
+
+  LoadBalancerDnsName:
+    Description: >-
+      Direct-to-ALB hostname. Do not point DNS at this — use the alias record in
+      this stack so the certificate matches.
+    Value: !GetAtt LoadBalancer.DNSName
+
+  LoadBalancerCanonicalHostedZoneId:
+    Description: Hosted zone ID Route 53 uses for alias records to this ALB.
+    # The attribute is CanonicalHostedZoneID - all-cap "ID". GetAtt is
+    # case-sensitive, so the "Id" spelling fails at deploy time.
+    Value: !GetAtt LoadBalancer.CanonicalHostedZoneID
+
+  ApiCertificateArn:
+    Description: >-
+      Certificate to attach to the HTTPS listener. Replaces CertificateArn on the
+      next deployment when you re-issue for a new name or an expiry.
+    Value: !If [CreateCertificate, !Ref ApiCertificate, !Ref CertificateArn]
+
+  TargetGroupArn:
+    Description: Register this with the ECS service so tasks attach to the ALB.
+    Value: !Ref ApiTargetGroup

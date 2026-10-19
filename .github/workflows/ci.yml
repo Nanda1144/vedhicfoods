@@ -117,6 +117,17 @@ jobs:
       - name: Install admin dependencies
         run: npm ci --prefix admin
 
+      # `backend/.env.test` is gitignored, so a clean runner has none and the
+      # env-dependent unit suites fall back to Zod defaults that differ from a
+      # developer's machine - e.g. `RAZORPAY_WEBHOOK_SECRET` reads as '' (the
+      # test signs with it while the service verifies with the placeholder, so
+      # every signature check fails) and `ADMIN_FRONTEND_URL` defaults to the
+      # storefront origin. Copying the tracked template restores the documented
+      # test environment. The job-level env above still wins: `dotenv` never
+      # overwrites an already-set variable.
+      - name: Provide test environment
+        run: cp backend/.env.test.example backend/.env.test
+
       - name: Generate Prisma client
         run: npm run prisma:generate
 
@@ -212,6 +223,15 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # `backend/.env.test` is gitignored, so a clean runner has none and the
+      # env-dependent suites fall back to Zod defaults. In particular the
+      # contact suite asserts forwarded-client-IP attribution, which only holds
+      # when `TRUST_PROXY=loopback` (the value the tracked template now ships).
+      # The job-level env above still wins: `dotenv` never overwrites an
+      # already-set variable, so DATABASE_URL/TEST_DATABASE_URL stay loopback.
+      - name: Provide test environment
+        run: cp backend/.env.test.example backend/.env.test
 
       - name: Generate Prisma client
         run: npm run prisma:generate

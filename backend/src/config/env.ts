@@ -254,9 +254,9 @@ const envSchema = z.object({
   TRUST_PROXY: z
     .string()
     .optional()
-    // `TRUST_PROXY=false` is what every .env.*.example ships, so the literal
-    // string has to be normalised to the boolean before the refine below —
-    // otherwise the documented value is rejected by its own validator.
+    // `TRUST_PROXY=false` is a documented value in .env.*.example, so the
+    // literal string has to be normalised to the boolean before the refine
+    // below — otherwise the documented value is rejected by its own validator.
     .transform(v => (v === undefined || v === '' || v.toLowerCase() === 'false' ? false : v))
     .refine(
       v =>

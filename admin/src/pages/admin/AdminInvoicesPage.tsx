@@ -6,8 +6,9 @@ import { useToast } from '@/context'
 import { formatCurrency, formatDate } from '@/utils/format'
 import { AdminPageHeader, DataTable, StatusPill, AdminToolbar, PaginationBar } from '@/components/admin'
 import type { Column } from '@/components/admin'
-import type { Invoice } from '@/types'
-import { Badge, Button, Icon, Skeleton } from '@/components/common'
+import type { Invoice, OrderLineItem } from '@/types'
+import { Badge, Button, Icon, Modal, Skeleton } from '@/components/common'
+import { Input } from '@/components/common/form'
 
 const PAGE_SIZE = 10
 
@@ -24,17 +25,25 @@ export function AdminInvoicesPage() {
     }
   })
   const [page, setPage] = useState(1)
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+  const [detail, setDetail] = useState<Invoice | null>(null)
 
   const { data, loading, error } = useAsync(() => adminService.invoices(), [])
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase()
+    const from = fromDate ? new Date(`${fromDate}T00:00:00`).getTime() : null
+    const to = toDate ? new Date(`${toDate}T23:59:59.999`).getTime() : null
     return (data ?? []).filter((invoice) => {
       if (query && !`${invoice.invoiceNumber} ${invoice.orderNumber} ${invoice.customerName}`.toLowerCase().includes(query)) return false
       if (status && invoice.status !== status) return false
+      const issued = new Date(invoice.issuedAt).getTime()
+      if (from !== null && Number.isFinite(issued) && issued < from) return false
+      if (to !== null && Number.isFinite(issued) && issued > to) return false
       return true
     })
-  }, [data, search, status])
+  }, [data, search, status, fromDate, toDate])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
@@ -146,6 +155,9 @@ export function AdminInvoicesPage() {
         const isDownloaded = downloadedIds.has(invoice.id)
         return (
           <span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
+            <Button size="sm" variant="ghost" onClick={() => setDetail(invoice)}>
+              Details
+            </Button>
             <Button size="sm" variant="ghost" onClick={() => handleView(invoice)}>
               View
             </Button>
@@ -165,6 +177,23 @@ export function AdminInvoicesPage() {
           </span>
         )
       },
+    },
+  ]
+
+  const itemColumns: Array<Column<OrderLineItem>> = [
+    { key: 'item', header: 'Item', render: (item) => (
+      <span>
+        <strong>{item.name}</strong>
+        <span className="type-caption" style={{ display: 'block' }}>{item.sku}</span>
+      </span>
+    ) },
+    { key: 'qty', header: 'Qty', align: 'right', render: (item) => item.quantity },
+    { key: 'price', header: 'Price', align: 'right', render: (item) => formatCurrency(item.price) },
+    {
+      key: 'subtotal',
+      header: 'Subtotal',
+      align: 'right',
+      render: (item) => <strong>{formatCurrency(item.price * item.quantity)}</strong>,
     },
   ]
 
@@ -211,7 +240,39 @@ export function AdminInvoicesPage() {
         }}
         searchPlaceholder="Search invoice, order or customer…"
         filters={[{ label: 'Status', value: status, options: ['draft', 'issued', 'paid', 'cancelled'], onChange: setStatus }]}
-      />
+      >
+        <Input
+          type="date"
+          aria-label="Invoices issued from"
+          value={fromDate}
+          onChange={(event) => {
+            setFromDate(event.target.value)
+            setPage(1)
+          }}
+        />
+        <Input
+          type="date"
+          aria-label="Invoices issued to"
+          value={toDate}
+          onChange={(event) => {
+            setToDate(event.target.value)
+            setPage(1)
+          }}
+        />
+        {(fromDate || toDate) && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setFromDate('')
+              setToDate('')
+              setPage(1)
+            }}
+          >
+            Clear dates
+          </Button>
+        )}
+      </AdminToolbar>
 
       <section className="admin-card">
         <DataTable
@@ -222,6 +283,74 @@ export function AdminInvoicesPage() {
           footer={<PaginationBar page={page} pageCount={pageCount} total={filtered.length} pageSize={PAGE_SIZE} onPageChange={setPage} />}
         />
       </section>
+
+      <Modal
+        open={Boolean(detail)}
+        onClose={() => setDetail(null)}
+        title={detail ? `Invoice ${detail.invoiceNumber}` : 'Invoice'}
+        size="lg"
+        footer={
+          detail && (
+            <>
+              <Button variant="ghost" onClick={() => setDetail(null)}>
+                Close
+              </Button>
+              <Button variant="outline" icon="eye" onClick={() => handleView(detail)}>
+                Open PDF
+              </Button>
+              <Button icon="download" onClick={() => handleDownload(detail)}>
+                Download PDF
+              </Button>
+            </>
+          )
+        }
+      >
+        {detail && (
+          <div className="stack" style={{ gap: 20 }}>
+            <div className="row" style={{ gap: 24, flexWrap: 'wrap', justifyContent: 'space-between' }}>
+              <div>
+                <span className="type-caption">Order</span>
+                <p><strong>{detail.orderNumber}</strong></p>
+                <span className="type-caption">Customer</span>
+                <p>{detail.customerName}<br />{detail.customerEmail}</p>
+              </div>
+              <div>
+                <span className="type-caption">Issued</span>
+                <p>{formatDate(detail.issuedAt)}</p>
+                <span className="type-caption">Status</span>
+                <p><StatusPill status={detail.status} /></p>
+              </div>
+              <div>
+                <span className="type-caption">Ship to</span>
+                <p>
+                  {detail.shippingAddress.fullName}<br />
+                  {detail.shippingAddress.line1}
+                  {detail.shippingAddress.line2 ? <><br />{detail.shippingAddress.line2}</> : null}
+                  <br />
+                  {[detail.shippingAddress.city, detail.shippingAddress.state, detail.shippingAddress.pincode]
+                    .filter(Boolean)
+                    .join(', ')}
+                </p>
+              </div>
+            </div>
+
+            <DataTable
+              columns={itemColumns}
+              rows={detail.items}
+              rowKey={(item, index) => `${item.sku}-${index}`}
+              caption={`Items on ${detail.invoiceNumber}`}
+            />
+
+            <div className="stack" style={{ gap: 4, alignItems: 'flex-end' }}>
+              <span>Subtotal <strong>{formatCurrency(detail.subtotal)}</strong></span>
+              <span>Discount <strong>-{formatCurrency(detail.discount)}</strong></span>
+              <span>Shipping <strong>{formatCurrency(detail.shipping)}</strong></span>
+              <span>Tax <strong>{formatCurrency(detail.tax)}</strong></span>
+              <span className="type-body-lg">Total <strong>{formatCurrency(detail.total)}</strong></span>
+            </div>
+          </div>
+        )}
+      </Modal>
     </>
   )
 }

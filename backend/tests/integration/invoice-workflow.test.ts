@@ -61,6 +61,7 @@ async function createOrder(
     discount?: number
     shipping?: number
     tax?: number
+    paymentMethod?: string
   } = {}
 ) {
   const items: OrderItemInput[] = overrides.items ?? [
@@ -88,7 +89,7 @@ async function createOrder(
       total,
       status: overrides.status ?? OrderStatus.CONFIRMED,
       paymentStatus: overrides.paymentStatus ?? PaymentStatus.PAID,
-      paymentMethod: 'RAZORPAY',
+      paymentMethod: overrides.paymentMethod ?? 'RAZORPAY',
       currency: 'INR',
       shippingAddressSnapshot: {
         fullName: customerName,
@@ -195,6 +196,36 @@ describe('InvoiceService.createInvoiceForOrder', () => {
     // Order moves to CONFIRMED.
     const orderDb = await prisma.order.findUnique({ where: { id: order.id } })
     expect(orderDb?.status).toBe(OrderStatus.CONFIRMED)
+  })
+
+  it('creates an ISSUED invoice for a confirmed, unpaid cash-on-delivery order', async () => {
+    const order = await createOrder(customerAId, 'Alice Invoice', customerAEmail, {
+      paymentStatus: PaymentStatus.PENDING,
+      status: OrderStatus.CONFIRMED,
+      paymentMethod: 'COD',
+    })
+
+    const invoice = await InvoiceService.createInvoiceForOrder(order.id)
+
+    expect(invoice.invoiceNumber).toMatch(/^INV-\d{4}-\d{6}$/)
+    expect(invoice.status).toBe(InvoiceStatus.ISSUED)
+    expect(invoice.paymentStatus).toBe(PaymentStatus.PENDING)
+    expect(invoice.order.paymentMethod).toBe('COD')
+    expect(invoice.total).toBeCloseTo(Number(order.total), 2)
+
+    const orderDb = await prisma.order.findUnique({ where: { id: order.id } })
+    expect(orderDb?.invoiceId).toBe(invoice.id)
+  })
+
+  it('still refuses a cancelled cash-on-delivery order', async () => {
+    const order = await createOrder(customerAId, 'Alice Invoice', customerAEmail, {
+      paymentStatus: PaymentStatus.PENDING,
+      status: OrderStatus.CANCELLED,
+      paymentMethod: 'COD',
+    })
+
+    await expect(InvoiceService.createInvoiceForOrder(order.id)).rejects.toThrow(/paid orders/i)
+    expect(await prisma.invoice.findUnique({ where: { orderId: order.id } })).toBeNull()
   })
 
   it('is idempotent — a duplicate confirmation yields a single invoice', async () => {

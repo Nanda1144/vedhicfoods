@@ -1,14 +1,18 @@
 import type { Invoice } from '@/types'
-import { apiFetch, apiFetchBlob, type RequestOptions } from './http'
+import { apiFetch, apiFetchBlob, apiFetchRaw, type RequestOptions } from './http'
+
+interface InvoiceListEnvelope {
+  data?: Invoice[]
+  pagination?: { page?: number; limit?: number; total?: number; totalPages?: number }
+}
 
 export const invoiceService = {
   async list(options?: RequestOptions): Promise<Invoice[]> {
-    const data = await apiFetch<{ invoices: Invoice[]; pagination: Record<string, unknown> }>(
-      '/invoices',
-      { method: 'GET' },
-      options,
-    )
-    return data.invoices
+    // The API returns `{ success, data, pagination }`; `apiFetch` would unwrap
+    // `data` and discard `pagination`, but the previous code also read
+    // `data.invoices`, which never exists. Read the raw envelope instead.
+    const body = await apiFetchRaw<InvoiceListEnvelope>('/invoices', { method: 'GET' }, options)
+    return Array.isArray(body?.data) ? body.data : []
   },
 
   async listPaginated(
@@ -22,20 +26,21 @@ export const invoiceService = {
     limit: number
     totalPages: number
   }> {
-    const data = await apiFetch<{
-      invoices: Invoice[]
-      pagination: { page: number; limit: number; total: number; totalPages: number }
-    }>(
+    const body = await apiFetchRaw<InvoiceListEnvelope>(
       `/invoices?page=${page}&limit=${limit}`,
       { method: 'GET' },
       options,
     )
+    const items = Array.isArray(body?.data) ? body.data : []
+    const pagination = body?.pagination ?? {}
+    const resolvedLimit = pagination.limit ?? limit
+    const total = pagination.total ?? items.length
     return {
-      items: data.invoices,
-      total: data.pagination.total,
-      page: data.pagination.page,
-      limit: data.pagination.limit,
-      totalPages: data.pagination.totalPages,
+      items,
+      total,
+      page: pagination.page ?? page,
+      limit: resolvedLimit,
+      totalPages: pagination.totalPages ?? Math.ceil(total / Math.max(1, resolvedLimit)),
     }
   },
 

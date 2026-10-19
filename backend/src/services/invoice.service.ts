@@ -4,7 +4,7 @@ import { AppError } from '../utils/errors'
 import { HTTP_STATUS, ERROR_CODES } from '../constants'
 import { InvoiceGenerator, InvoiceData, InvoiceItem } from '../integrations/pdf/invoice-generator'
 import { S3Service } from '../integrations/aws/s3/s3.service'
-import { OrderStatus, PaymentStatus, InvoiceStatus } from '@prisma/client'
+import { OrderStatus, PaymentStatus, InvoiceStatus, PaymentMethod } from '@prisma/client'
 import { InvoiceEmailService } from './invoice-email.service'
 
 export interface InvoiceListParams {
@@ -171,10 +171,18 @@ export class InvoiceService {
       return this.getInvoiceById(existingInvoice.id) as Promise<InvoiceWithRelations>
     }
 
-    // Only create invoice for paid orders
-    if (order.paymentStatus !== PaymentStatus.PAID) {
+    // Online orders are invoiced only once payment capture has settled them.
+    // Cash-on-delivery is different: the order is confirmed at checkout with
+    // payment legitimately still PENDING, and the invoice must exist before
+    // dispatch. A cancelled or failed COD order is never invoiced.
+    const isConfirmedCodOrder =
+      order.paymentMethod === PaymentMethod.COD &&
+      order.status === OrderStatus.CONFIRMED &&
+      order.paymentStatus === PaymentStatus.PENDING
+
+    if (order.paymentStatus !== PaymentStatus.PAID && !isConfirmedCodOrder) {
       throw new AppError(
-        'Invoice can only be created for paid orders',
+        'Invoice can only be created for paid orders or confirmed cash-on-delivery orders',
         HTTP_STATUS.BAD_REQUEST,
         ERROR_CODES.BAD_REQUEST
       )

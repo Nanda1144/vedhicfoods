@@ -510,6 +510,22 @@ export class CheckoutService {
       logger.error({ error: emailError.message, orderId: order.id }, 'Failed to send order confirmation email')
     }
 
+    // Cash-on-delivery orders are confirmed at checkout, so no payment-capture
+    // webhook will ever fire to create their tax invoice. Generate it here
+    // instead. Non-fatal and idempotent: a failure leaves the order intact and
+    // the invoice can be regenerated from the admin console.
+    if (isCod) {
+      try {
+        const { InvoiceService } = await import('./invoice.service')
+        await InvoiceService.createInvoiceForOrder(order.id)
+      } catch (invoiceError: any) {
+        logger.error(
+          { error: invoiceError.message, orderId: order.id, orderNumber: order.orderNumber },
+          'COD invoice generation failed (non-fatal)'
+        )
+      }
+    }
+
     // Fetch order with payment record
     const fullOrder = await prisma.order.findUnique({
       where: { id: order.id },

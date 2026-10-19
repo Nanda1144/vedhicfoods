@@ -55,6 +55,21 @@ for (const file of [`.env.${environmentName}`, '.env']) {
 }
 
 /**
+ * Render runs every web service behind exactly one TLS-terminating proxy. When
+ * the platform marker is present and the operator has not chosen a value, use
+ * that known topology instead of failing boot on a variable that the platform
+ * itself determines. Any explicit TRUST_PROXY value (including `false` in a
+ * non-Render deployment) still wins.
+ */
+if (
+  environmentName === 'production' &&
+  !(process.env.TRUST_PROXY ?? '').trim() &&
+  (process.env.RENDER ?? '').toLowerCase() === 'true'
+) {
+  process.env.TRUST_PROXY = '1'
+}
+
+/**
  * Placeholder values that ship in `.env.example` and in the old Zod defaults.
  *
  * SECURITY: these must never reach a production process. A deployment that
@@ -70,6 +85,26 @@ export const INSECURE_PLACEHOLDER_SECRETS = [
   'rzp_test_placeholder_secret',
   'rzp_webhook_secret_placeholder',
 ] as const
+
+/**
+ * Razorpay credentials are optional at boot now that the authoritative source
+ * is the admin-managed encrypted `payment_settings` row. Placeholder values are
+ * treated as "not configured" in production instead of aborting the process:
+ * the storefront simply must not offer online payment until an operator saves
+ * real credentials from the console.
+ */
+export function isPlaceholderRazorpayCredential(value: string | null | undefined): boolean {
+  const normalised = (value ?? '').trim()
+  if (!normalised) return false
+  if ((INSECURE_PLACEHOLDER_SECRETS as readonly string[]).includes(normalised)) return true
+  const lowered = normalised.toLowerCase()
+  return (
+    lowered.includes('replace_me') ||
+    lowered.includes('placeholder') ||
+    lowered.includes('changeme') ||
+    lowered.includes('change_me')
+  )
+}
 
 const envSchema = z.object({
   NODE_ENV: z.enum(ENVIRONMENT_NAMES).default(environmentName),
@@ -147,10 +182,20 @@ const envSchema = z.object({
   RAZORPAY_KEY_SECRET: z.string().default('rzp_test_placeholder_secret'),
   RAZORPAY_WEBHOOK_SECRET: z.string().default('rzp_webhook_secret_placeholder'),
 
-  // 32-Byte (256-bit) Encryption Key for Payment Gateway Credentials.
+  // 32-Byte (256-bit) Encryption Key for the legacy encrypted columns.
   // In production this MUST be supplied from AWS Secrets Manager / SSM
-  // Parameter Store — the historical default is a public constant.
+  // Parameter Store �?" the historical default is a public constant.
   ENCRYPTION_KEY: z.string().default('vedhicfoods_secure_32bit_key_2026_aes!'),
+
+  // Dedicated AES-256-GCM key for admin-managed payment credentials.
+  // Optional at boot so a deployment can start before the gateway is configured,
+  // but required (and never defaulted) when an operator saves a secret in
+  // production/staging. Legacy rows encrypted with ENCRYPTION_KEY remain
+  // readable and are automatically re-encrypted with this key on the next save.
+  PAYMENT_CREDENTIALS_ENCRYPTION_KEY: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().min(32, 'PAYMENT_CREDENTIALS_ENCRYPTION_KEY must be at least 32 characters').optional()
+  ),
 
   // Brevo (Sendinblue) Transactional Email Service
   BREVO_API_KEY: z.string().optional(),
@@ -345,13 +390,20 @@ if (validatedEnv.NODE_ENV === 'production') {
 
   check('JWT_SECRET', validatedEnv.JWT_SECRET, 32)
   check('ENCRYPTION_KEY', validatedEnv.ENCRYPTION_KEY, 32)
-  // The webhook secret cannot fall back to the database: it is the only thing
-  // proving a callback genuinely came from Razorpay.
-  check('RAZORPAY_WEBHOOK_SECRET', validatedEnv.RAZORPAY_WEBHOOK_SECRET, 16)
-  // Razorpay API keys may live in the encrypted PaymentSettings table instead,
-  // so empty is tolerated here — but the shipped placeholder is not.
-  check('RAZORPAY_KEY_ID', validatedEnv.RAZORPAY_KEY_ID, 8, false)
-  check('RAZORPAY_KEY_SECRET', validatedEnv.RAZORPAY_KEY_SECRET, 8, false)
+  // Razorpay credentials are deliberately NOT boot requirements. They are
+  // administered from the payment settings screen and stored encrypted, so the
+  // API must be able to start (and the dashboard must be reachable) before the
+  // gateway exists. A placeholder is treated as unconfigured at runtime rather
+  // than crashing the whole service.
+
+  if (!validatedEnv.PAYMENT_CREDENTIALS_ENCRYPTION_KEY) {
+    console.warn(
+      '�s� Payment credential encryption is not configured. ' +
+        'Set PAYMENT_CREDENTIALS_ENCRYPTION_KEY (32+ characters) before saving ' +
+        'Razorpay credentials in the admin console. Existing legacy credentials ' +
+        'remain readable via ENCRYPTION_KEY.'
+    )
+  }
 
   /**
    * A wildcard or plaintext-http CORS origin in production silently disables the
@@ -405,22 +457,21 @@ if (validatedEnv.NODE_ENV === 'production') {
   }
 
 /**
-   * In production the app is always behind an Application Load Balancer, so the
-   * proxy hop count must be stated rather than defaulted. Leaving it unset meant
-   * `trust proxy` stayed at `false`, which made Express treat the load balancer
-   * as the client: every rate limiter keyed on `req.ip` collapsed into a single
-   * global bucket shared by every customer, and audit entries recorded the ALB's
-   * address instead of the caller's.
+   * In production the app is behind a TLS-terminating proxy (Render by default,
+   * or an explicit load balancer/ingress), so the hop count must be stated
+   * rather than silently trusting client-supplied `X-Forwarded-For` values.
+   * Render deployments are auto-detected above because the platform sets
+   * `RENDER=true`; every other topology must set this explicitly.
    *
-   * `TRUST_PROXY=false` is rejected for the same reason — a production task with
-   * no proxy in front of it is a misconfiguration to catch, not a supported
-   * topology for this deployment.
+   * `TRUST_PROXY=false` is rejected because a production task with no proxy in
+   * front of it is a misconfiguration to catch, not a supported topology for
+   * this deployment.
    */
   if (validatedEnv.TRUST_PROXY === false) {
     offenders.push(
-      'TRUST_PROXY must be set explicitly in production. This deployment always terminates ' +
-        'TLS at an Application Load Balancer, so the correct value is TRUST_PROXY=1 ' +
-        '(use 2 only if a CDN such as CloudFront sits in front of the ALB). ' +
+      'TRUST_PROXY must be set explicitly in production (Render is detected via RENDER=true ' +
+        'and defaults to 1). Set the real number of proxy hops, e.g. TRUST_PROXY=1 behind ' +
+        'Render or a single load balancer, and TRUST_PROXY=2 only when a CDN sits in front. ' +
         'Rate limiting and audit IP attribution depend on it.'
     )
   }

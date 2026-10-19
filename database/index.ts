@@ -11,7 +11,15 @@
 export { db, default as prisma } from './client'
 
 // AES-256-GCM helpers for encrypted columns
-export { encrypt32, decrypt32, maskSecret } from './encryption'
+export {
+  encrypt32,
+  decrypt32,
+  maskSecret,
+  encryptPaymentSecret,
+  decryptPaymentSecret,
+  isPaymentEncryptionKeyAvailable,
+  type PaymentSecretField,
+} from './encryption'
 
 // Re-exported so consumers get every model, enum and generated type from one
 // place instead of importing '@prisma/client' directly in 30+ files.

@@ -102,9 +102,10 @@ router.use('/discounts', discountAdminRoutes)
 router.use('/coupons', discountAdminRoutes)
 router.use('/promotions', discountAdminRoutes)
 
-// Payment Gateway Settings (32-byte AES Encrypted)
+// Payment Gateway Settings (dedicated AES-256-GCM payment key + per-field AAD)
 router.get('/payment-settings', authenticate, requirePermission('settings.read'), PaymentSettingsController.getSettings)
 router.put('/payment-settings', authenticate, requirePermission('settings.update'), PaymentSettingsController.updateSettings)
+router.post('/payment-settings/test', authenticate, requirePermission('settings.update'), PaymentSettingsController.testConnection)
 
 // Centralized Platform Settings (business, shipping, invoice, tax, store & maintenance status)
 router.use('/settings', adminSettingsRoutes)

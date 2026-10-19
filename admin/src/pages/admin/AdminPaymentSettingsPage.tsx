@@ -15,11 +15,38 @@ const METHOD_LABEL: Record<string, string> = {
   netbanking: 'Net banking',
 }
 
+const CONFIGURATION_STATE: Record<
+  NonNullable<PaymentGatewaySettings['configurationState']>,
+  { label: string; tone: string; copy: string }
+> = {
+  disabled: {
+    label: 'Online payments off',
+    tone: 'is-warning',
+    copy: 'Customers will not be offered online payment at checkout.',
+  },
+  incomplete: {
+    label: 'Needs credentials',
+    tone: 'is-warning',
+    copy: 'Add a key id and key secret, then run the connection test.',
+  },
+  ready_test: {
+    label: 'Ready - Test mode',
+    tone: 'is-info',
+    copy: 'Online payments are live in Razorpay test mode. No real money moves.',
+  },
+  ready_live: {
+    label: 'Ready - Live mode',
+    tone: 'is-success',
+    copy: 'Online payments are live and will charge real customers.',
+  },
+}
+
 export function AdminPaymentSettingsPage() {
   const { can } = useAdminAuth()
   const { push } = useToast()
   const [gateway, setGateway] = useState<PaymentGatewaySettings | null>(null)
   const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
 
   const result = useAsync(() => adminService.paymentGateway(), [])
 
@@ -71,20 +98,81 @@ export function AdminPaymentSettingsPage() {
     }
   }
 
+  const runConnectionTest = async () => {
+    setTesting(true)
+    try {
+      const outcome = await adminService.testPaymentGateway()
+      push({
+        title: 'Connection test passed',
+        description: outcome.message,
+      })
+    } catch (caught) {
+      push({
+        title: 'Connection test failed',
+        description: caught instanceof Error ? caught.message : 'Razorpay credentials were rejected.',
+        tone: 'danger',
+      })
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const configurationState = form.configurationState ?? (form.onlineEnabled ? 'incomplete' : 'disabled')
+  const statusCopy = CONFIGURATION_STATE[configurationState]
+
   return (
     <>
       <AdminPageHeader
         title="Payment settings"
         description="Razorpay gateway keys and accepted payment methods."
         actions={
-          <span className="admin-alert is-info" style={{ paddingBlock: 8 }}>
+          <span className={`admin-alert ${statusCopy.tone}`} style={{ paddingBlock: 8 }}>
             <Icon name="shield" size={15} />
-            <span>{form.testMode ? 'Test mode — no real charges' : 'Live mode'}</span>
+            <span>{statusCopy.label}</span>
           </span>
         }
       />
 
       <form className="admin-form" onSubmit={submit} noValidate>
+        <section className="admin-card admin-form__section">
+          <div className="row row--between" style={{ alignItems: 'center', gap: 16 }}>
+            <div>
+              <p className="admin-form__section-title" style={{ marginBottom: 4 }}>Online payments</p>
+              <p className="admin-note">{statusCopy.copy}</p>
+            </div>
+            <Switch
+              label={form.onlineEnabled ? 'Enabled' : 'Disabled'}
+              checked={form.onlineEnabled}
+              onCheckedChange={(value) => set('onlineEnabled', value)}
+            />
+          </div>
+          <div className="admin-note" style={{ marginTop: 12 }}>
+            {form.updatedAt ? (
+              <>
+                Last updated {new Date(form.updatedAt).toLocaleString('en-IN')}
+                {form.updatedByName || form.updatedByEmail
+                  ? ` by ${form.updatedByName || form.updatedByEmail}`
+                  : ''}
+                .
+              </>
+            ) : (
+              'No saved configuration yet.'
+            )}
+            {form.credentialError ? (
+              <span className="admin-note admin-note--error"> {form.credentialError}</span>
+            ) : null}
+          </div>
+          {form.encryptionKeyConfigured === false && (
+            <div className="admin-alert is-warning" style={{ marginTop: 12 }}>
+              <Icon name="alert" size={16} />
+              <span>
+                PAYMENT_CREDENTIALS_ENCRYPTION_KEY is not configured on the server. Add it before
+                saving credentials.
+              </span>
+            </div>
+          )}
+        </section>
+
         <section className="admin-card admin-form__section">
           <p className="admin-form__section-title">Gateway keys</p>
           <div className="admin-form__grid">
@@ -101,7 +189,14 @@ export function AdminPaymentSettingsPage() {
                 onChange={(event) => set('razorpayKeySecretMasked', event.target.value)}
               />
             </Field>
-            <Field label="Webhook secret" hint="Used to verify Razorpay webhook signatures. Leave unchanged to keep the current secret.">
+            <Field
+              label="Webhook secret"
+              hint={
+                form.webhookConfigured
+                  ? 'Stored. Used to verify Razorpay webhook signatures. Leave unchanged to keep the current secret.'
+                  : 'Not stored yet. Razorpay callbacks will be rejected until a webhook secret is saved.'
+              }
+            >
               <Input
                 type="password"
                 autoComplete="new-password"
@@ -151,6 +246,16 @@ export function AdminPaymentSettingsPage() {
         )}
 
         <div className="admin-form__foot">
+          <Button
+            type="button"
+            variant="ghost"
+            icon="refresh"
+            loading={testing}
+            disabled={!can('settings.update') || !form.configured}
+            onClick={() => void runConnectionTest()}
+          >
+            Test connection
+          </Button>
           <Button type="submit" icon="check" loading={saving} disabled={!can('settings.update')}>
             Save payment settings
           </Button>

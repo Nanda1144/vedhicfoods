@@ -18,6 +18,7 @@ import type {
   OrderStatus,
   OrderTimelineEntry,
   PaymentGatewaySettings,
+  PaymentGatewayTestResult,
   Product,
   Promotion,
   RevenuePoint,
@@ -502,18 +503,36 @@ function auditTone(action: AuditAction): AuditLog['tone'] {
 }
 
 function mapPaymentGateway(raw: any): PaymentGatewaySettings {
+  const configurationState = ['disabled', 'incomplete', 'ready_test', 'ready_live'].includes(
+    raw.configurationState,
+  )
+    ? (raw.configurationState as PaymentGatewaySettings['configurationState'])
+    : raw.onlineEnabled
+      ? 'incomplete'
+      : 'disabled'
+
   return {
     provider: 'razorpay',
     razorpayKeyId: str(raw.razorpayKeyId),
-    razorpayKeySecretMasked: str(raw.razorpayKeySecretMasked, '••••••••••••'),
-    webhookSecretMasked: str(raw.webhookSecretMasked, '••••••••••••'),
+    razorpayKeySecretMasked: str(raw.razorpayKeySecretMasked),
+    webhookSecretMasked: str(raw.webhookSecretMasked),
     enabledMethods: Array.isArray(raw.enabledMethods)
       ? (raw.enabledMethods.map((method: string) => method.toLowerCase()) as PaymentGatewaySettings['enabledMethods'])
       : [],
+    onlineEnabled: bool(raw.onlineEnabled),
     testMode: raw.testMode !== undefined ? bool(raw.testMode) : true,
     codEnabled: raw.codEnabled !== undefined ? bool(raw.codEnabled) : true,
     codLimit: num(raw.codLimit, 5000),
-    configured: raw.configured ?? (bool(raw.hasKeySecret) && bool(raw.hasWebhookSecret)),
+    configured: raw.configured ?? bool(raw.hasKeySecret),
+    webhookConfigured: raw.webhookConfigured ?? bool(raw.hasWebhookSecret),
+    configurationState,
+    keyIdMode: ['test', 'live', 'unknown'].includes(raw.keyIdMode) ? raw.keyIdMode : 'unknown',
+    encryptionKeyConfigured:
+      raw.encryptionKeyConfigured === undefined ? undefined : bool(raw.encryptionKeyConfigured),
+    credentialError: typeof raw.credentialError === 'string' ? raw.credentialError : null,
+    updatedAt: iso(raw.updatedAt),
+    updatedByName: str(raw.updatedByName) || null,
+    updatedByEmail: str(raw.updatedByEmail) || null,
   }
 }
 
@@ -1154,11 +1173,24 @@ export const adminService = {
     if (patch.razorpayKeySecretMasked !== undefined) body.razorpayKeySecretMasked = patch.razorpayKeySecretMasked
     if (patch.webhookSecretMasked !== undefined) body.webhookSecretMasked = patch.webhookSecretMasked
     if (patch.enabledMethods !== undefined) body.enabledMethods = patch.enabledMethods
+    if (patch.onlineEnabled !== undefined) body.onlineEnabled = patch.onlineEnabled
     if (patch.testMode !== undefined) body.testMode = patch.testMode
     if (patch.codEnabled !== undefined) body.codEnabled = patch.codEnabled
     if (patch.codLimit !== undefined) body.codLimit = patch.codLimit
     const saved = await apiFetchRaw<any>('/admin/payment-settings', { method: 'PUT', body: JSON.stringify(body) }, options)
     return mapPaymentGateway(saved ?? {})
+  },
+
+  /**
+   * Read-only Razorpay credential probe. The backend lists one order; it never
+   * creates an order or charges a customer.
+   */
+  async testPaymentGateway(options?: RequestOptions): Promise<PaymentGatewayTestResult> {
+    return apiFetchRaw<PaymentGatewayTestResult>(
+      '/admin/payment-settings/test',
+      { method: 'POST' },
+      options,
+    )
   },
 
   async saveBrand(patch: Partial<BrandSettings>, options?: RequestOptions) {

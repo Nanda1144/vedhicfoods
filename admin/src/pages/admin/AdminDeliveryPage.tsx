@@ -25,7 +25,13 @@ export function AdminDeliveryPage() {
   const [busy, setBusy] = useState(false)
 
   const deliveries = useAsync(() => adminService.deliveries(), [])
-  const partners = useAsync(() => adminService.deliveryPartners(), [])
+  // Partners come from the staff directory (`staff.read`). Requesting it without
+  // the grant only produces a 403 in the console, so skip it and fall back to an
+  // empty list when the signed-in role cannot read staff.
+  const partners = useAsync(
+    () => (can('staff.read') ? adminService.deliveryPartners() : Promise.resolve([])),
+    [can],
+  )
   const orders = useAsync(() => adminService.orders(), [])
 
   const activePartners = partners.data ?? []

@@ -5,8 +5,37 @@ import { logger } from '../config/logger'
 import { sendControllerError } from '../utils/api-response'
 import { getRawBody } from '../utils/raw-body'
 import { env } from '../config/env'
+import { PaymentSettingsService } from '../services/payment-settings.service'
 
 export class PaymentController {
+  /**
+   * GET /api/v1/payments/config
+   *
+   * Public, credential-free configuration for the storefront: whether online
+   * payment is available, which methods are enabled, and the COD policy. The
+   * key id is intentionally not exposed here; it is returned only when an
+   * authenticated order session is initiated.
+   */
+  public static async getPaymentConfig(_req: Request, res: Response): Promise<void> {
+    try {
+      const data = await PaymentSettingsService.getPublicConfig()
+      res.status(200).json({ success: true, data })
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'Failed to retrieve public payment config')
+      res.status(200).json({
+        success: true,
+        data: {
+          onlineEnabled: false,
+          configured: false,
+          testMode: true,
+          enabledMethods: [],
+          codEnabled: true,
+          codLimit: 5000,
+        },
+      })
+    }
+  }
+
   /**
    * POST /api/v1/payments/razorpay/order
    *

@@ -29,8 +29,10 @@ const COD_METHOD: PaymentMethodOption = {
 interface PaymentMethodSelectorProps {
   value: PaymentMethod
   onChange: (method: PaymentMethod) => void
-  /** When false (the default) the Cash on Delivery option is not rendered. */
+  /** When false the Cash on Delivery option is not rendered. */
   codEnabled?: boolean
+  /** When false (operator disabled the gateway) online payment is hidden. */
+  onlineEnabled?: boolean
   error?: string
 }
 
@@ -38,17 +40,23 @@ export function PaymentMethodSelector({
   value,
   onChange,
   codEnabled = false,
+  onlineEnabled = true,
   error,
 }: PaymentMethodSelectorProps) {
-  const methods: PaymentMethodOption[] = codEnabled
-    ? [RAZORPAY_METHOD, COD_METHOD]
-    : [RAZORPAY_METHOD]
+  const methods: PaymentMethodOption[] = []
+  if (onlineEnabled) methods.push(RAZORPAY_METHOD)
+  if (codEnabled) methods.push(COD_METHOD)
 
   return (
     <div className="payment-methods">
       <fieldset className="payment-methods__set">
         <legend className="address-form__title">Payment method</legend>
         <div className={error ? 'payment-methods__list payment-methods__list--error' : 'payment-methods__list'}>
+          {methods.length === 0 && (
+            <p className="field__help field__help--error" role="alert">
+              No payment methods are available right now. Please try again later or contact support.
+            </p>
+          )}
           {methods.map((method) => (
             <Radio
               key={method.id}

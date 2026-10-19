@@ -336,12 +336,17 @@ values for:
 | Variable | Rule |
 | --- | --- |
 | `JWT_SECRET` | ≥ 32 chars, unique |
-| `ENCRYPTION_KEY` | ≥ 32 chars, unique (encrypts stored Razorpay creds) |
-| `RAZORPAY_WEBHOOK_SECRET` | ≥ 16 chars, real |
-| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | real (`rzp_live_*`) or blank (DB-stored) |
+| `ENCRYPTION_KEY` | ≥ 32 chars, unique (general-purpose AES key) |
 | `FRONTEND_URL` / `ADMIN_FRONTEND_URL` | explicit `https://` origins, not loopback/reserved |
-| `TRUST_PROXY` | must be set (e.g. `1`) |
+| `TRUST_PROXY` | must resolve to non-`false` (Render auto-defaults to `1` when `RENDER=true`) |
 | `REDIS_URL` | required in production |
+
+Razorpay credentials are configured at runtime from **Admin → Payment Settings**
+and stored encrypted, so `RAZORPAY_*` is no longer a boot requirement. Set
+`PAYMENT_CREDENTIALS_ENCRYPTION_KEY` (≥ 32 chars, unique) before saving
+credentials in production — it is the dedicated AES-256-GCM key for stored
+payment credentials; legacy rows written with `ENCRYPTION_KEY` still decrypt and
+are re-encrypted on the next save.
 
 Copy key names from the matching template — never deploy an `.env` file:
 

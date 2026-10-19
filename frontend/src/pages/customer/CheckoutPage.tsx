@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { useCart, useSettings } from '@/context'
 import { orderService, type CheckoutResult } from '@/services/orderService'
@@ -43,6 +43,32 @@ export function CheckoutPage() {
   const [payment, setPayment] = useState<PaymentMethod>('razorpay')
   const [placing, setPlacing] = useState(false)
   const [step, setStep] = useState(1)
+
+  // Operator-controlled availability. Optimistic before the request resolves so
+  // the normal path does not flash, then fail-closed if the lookup fails.
+  const [paymentConfig, setPaymentConfig] = useState<{
+    onlineEnabled: boolean
+    methods: string[]
+  } | null>(null)
+  const onlineEnabled =
+    (paymentConfig?.onlineEnabled ?? true) && (paymentConfig ? paymentConfig.methods.includes('razorpay') : true)
+
+  useEffect(() => {
+    let cancelled = false
+    void paymentService
+      .config()
+      .then((config) => {
+        if (cancelled) return
+        setPaymentConfig({ onlineEnabled: config.onlineEnabled, methods: config.enabledMethods })
+        if (!config.onlineEnabled && config.codEnabled) setPayment('cod')
+      })
+      .catch(() => {
+        if (!cancelled) setPaymentConfig({ onlineEnabled: false, methods: [] })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Set the moment an order succeeds. The basket is emptied right after, which
   // would otherwise trip the empty-cart guard below while this page is still
@@ -328,15 +354,27 @@ export function CheckoutPage() {
 
               {step === 4 && (
                 <div className="checkout-pay">
-                  <PaymentMethodSelector value={payment} onChange={setPayment} codEnabled={settings.codEnabled} />
-                  <PaymentGateway
-                    amount={totals.total}
-                    method={payment}
-                    methodLabel={METHOD_LABELS[payment]}
-                    onPay={payment === 'cod' ? payCod : payOnline}
-                    onBack={() => setStep(3)}
-                    disabled={hasStockIssues}
+                  <PaymentMethodSelector
+                    value={payment}
+                    onChange={setPayment}
+                    codEnabled={settings.codEnabled}
+                    onlineEnabled={onlineEnabled}
                   />
+                  {!onlineEnabled && !settings.codEnabled ? (
+                    <p className="field__help field__help--error" role="alert">
+                      Online payments are temporarily unavailable and Cash on Delivery is not
+                      offered. Please check back soon.
+                    </p>
+                  ) : (
+                    <PaymentGateway
+                      amount={totals.total}
+                      method={payment}
+                      methodLabel={METHOD_LABELS[payment]}
+                      onPay={payment === 'cod' ? payCod : payOnline}
+                      onBack={() => setStep(3)}
+                      disabled={hasStockIssues}
+                    />
+                  )}
                 </div>
               )}
 

@@ -5,6 +5,7 @@ import { createApp } from '../../src/app'
 import { prisma } from '../../src/config/database'
 import { AuthService } from '../../src/services/auth.service'
 import { isCodEnabled } from '../../src/utils/cod-settings'
+import { clearRazorpayCredentialCache } from '../../src/integrations/razorpay/razorpay.client'
 import { SettingCategory } from '@prisma/client'
 
 const app = createApp()
@@ -32,6 +33,7 @@ describe('Admin-controlled Cash-on-Delivery policy', () => {
     updatedBy: string | null
   } | null = null
   let originalPaymentCodEnabled: boolean | undefined
+  let originalOnlineEnabled: boolean | undefined
 
   async function setCodSetting(value: string): Promise<void> {
     await prisma.systemSetting.upsert({
@@ -59,6 +61,25 @@ describe('Admin-controlled Cash-on-Delivery policy', () => {
     })
   }
 
+  /**
+   * Online payment is now opt-in: the operator must enable it before checkout
+   * accepts a RAZORPAY order. Credentials come from the test environment.
+   */
+  async function enableOnlinePayments(): Promise<void> {
+    await prisma.paymentSettings.upsert({
+      where: { id: 'default' },
+      update: { onlineEnabled: true, enabledMethods: ['razorpay'] },
+      create: {
+        id: 'default',
+        provider: 'razorpay',
+        onlineEnabled: true,
+        enabledMethods: ['razorpay'],
+        testMode: true,
+      },
+    })
+    clearRazorpayCredentialCache()
+  }
+
   async function restoreBaseline(): Promise<void> {
     if (originalSetting) {
       const data = {
@@ -79,6 +100,13 @@ describe('Admin-controlled Cash-on-Delivery policy', () => {
     if (originalPaymentCodEnabled !== undefined) {
       await setPaymentCod(originalPaymentCodEnabled)
     }
+    if (originalOnlineEnabled !== undefined) {
+      await prisma.paymentSettings.update({
+        where: { id: 'default' },
+        data: { onlineEnabled: originalOnlineEnabled },
+      })
+    }
+    clearRazorpayCredentialCache()
   }
 
   function authedCheckout(body: Record<string, unknown>) {
@@ -168,6 +196,7 @@ describe('Admin-controlled Cash-on-Delivery policy', () => {
 
     const payment = await prisma.paymentSettings.findUnique({ where: { id: 'default' } })
     originalPaymentCodEnabled = payment?.codEnabled
+    originalOnlineEnabled = payment?.onlineEnabled
   }, 120000)
 
   afterEach(async () => {
@@ -281,6 +310,7 @@ describe('Admin-controlled Cash-on-Delivery policy', () => {
   describe('4. Razorpay proceeds while COD is disabled', () => {
     it('still creates an online-payment order over the authenticated endpoint', async () => {
       await setCodSetting('false')
+      await enableOnlinePayments()
 
       const res = await authedCheckout({
         addressId,
@@ -295,6 +325,7 @@ describe('Admin-controlled Cash-on-Delivery policy', () => {
 
     it('still creates an online-payment order over the guest storefront adapter', async () => {
       await setCodSetting('false')
+      await enableOnlinePayments()
 
       const res = await storefrontCheckout({ paymentMethod: 'RAZORPAY' })
 

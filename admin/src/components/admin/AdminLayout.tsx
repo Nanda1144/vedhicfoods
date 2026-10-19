@@ -108,7 +108,7 @@ function AdminShell() {
       ADMIN_NAV.map((section) => ({
         ...section,
         items: section.items.filter((item) => !item.permission || can(item.permission)),
-      })).filter((section) => section.items.length > 0 || section.title === 'Dashboard'),
+      })).filter((section) => section.items.length > 0),
     [can],
   )
 
@@ -125,7 +125,12 @@ function AdminShell() {
   }, [visibleNav, location.pathname, location.hash])
 
   const bottomLinks = BOTTOM_LINKS.filter((link) =>
-    visibleNav.some((section) => section.items.some((item) => item.href.split('#')[0].startsWith(link.href))),
+    visibleNav.some((section) =>
+      section.items.some((item) => {
+        const href = item.href.split('#')[0]
+        return link.end ? href === link.href : href.startsWith(link.href)
+      }),
+    ),
   )
 
   // Render the console as soon as a persisted session exists rather than blocking

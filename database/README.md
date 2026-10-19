@@ -162,11 +162,20 @@ Create or verify `database/.env` (gitignored). For the loopback PostgreSQL in
 ```env
 DATABASE_URL="postgresql://vedhi_admin:POSTGRES_PASSWORD@localhost:5432/vedhicfoods?sslmode=disable"
 ENCRYPTION_KEY="(generate one — see below)"
+PAYMENT_CREDENTIALS_ENCRYPTION_KEY="(generate a second, separate one)"
 ```
 Generate, never copy, the `ENCRYPTION_KEY` (`openssl rand -base64 48`), and keep
 it ≥ 32 chars — `backend/src/config/env.ts` enforces that in production and
 rejects placeholder values. In production the value comes from AWS Secrets
 Manager (`vedhicfoods/backend/ENCRYPTION_KEY`), never from a committed file.
+
+`PAYMENT_CREDENTIALS_ENCRYPTION_KEY` is the dedicated key (AES-256-GCM, `v2`
+ciphertext) for admin-managed payment credentials stored by Payment Settings.
+Production/staging require it before an admin can save credentials; development
+and test fall back to `ENCRYPTION_KEY`. It must be `openssl rand -base64 48` too,
+and must never be rotated while encrypted credentials exist — legacy rows
+encrypted with `ENCRYPTION_KEY` remain readable and are re-encrypted on the next
+save.
 
 ### Step 3: Build the Package
 ```bash

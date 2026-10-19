@@ -834,8 +834,9 @@ model PaymentSettings {
   razorpayKeyId          String   @default("")
   encryptedKeySecret     String   @default("")
   encryptedWebhookSecret String   @default("")
-  enabledMethods         String[] @default(["razorpay", "upi", "card", "netbanking"])
-  testMode               Boolean  @default(true)
+    enabledMethods         String[] @default(["razorpay", "upi", "card", "netbanking"])
+    onlineEnabled          Boolean  @default(false)
+    testMode               Boolean  @default(true)
   codEnabled             Boolean  @default(true)
   codLimit               Float    @default(5000)
   updatedBy              String?

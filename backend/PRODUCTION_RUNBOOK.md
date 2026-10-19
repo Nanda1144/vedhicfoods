@@ -326,19 +326,24 @@ nothing hand-typed, no values in this file or in the task definition:
 powershell -ExecutionPolicy Bypass -File backend\infra\scripts\create-secrets.ps1
 ```
 
-The seven secrets, under the `vedhicfoods/backend/` prefix:
-`DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY`, `RAZORPAY_KEY_ID`,
+The secrets, under the `vedhicfoods/backend/` prefix:
+`DATABASE_URL`, `JWT_SECRET`, `ENCRYPTION_KEY`,
+`PAYMENT_CREDENTIALS_ENCRYPTION_KEY`, `RAZORPAY_KEY_ID`,
 `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`, `BREVO_API_KEY`.
 
 Generate, never invent: `openssl rand -base64 48` (the script also generates
 `JWT_SECRET`/`ENCRYPTION_KEY` from a CSPRNG when not supplied).
 
-> `ENCRYPTION_KEY` rotation is **not** self-service. Stored payment credentials are
-> AES-256-GCM encrypted under this single key and the ciphertext carries no key
-> version. Rotating without first decrypting with the old key and re-encrypting with
-> the new one makes those credentials permanently unreadable, which disables online
-> payment for the business. Add key versioning to the ciphertext before the first
-> rotation.
+Razorpay credentials are configured at runtime from **Admin → Payment Settings**
+and stored encrypted in the database; `RAZORPAY_KEY_*`/`RAZORPAY_WEBHOOK_SECRET`
+are an optional first-boot fallback only, and no longer block startup.
+
+> `PAYMENT_CREDENTIALS_ENCRYPTION_KEY` protects admin-managed payment credentials.
+> New ciphertexts are tagged `v2:<iv>:<tag>:<ciphertext>` with field-bound AAD, but
+> the tag identifies the *format*, not the *key*, so key rotation is still not
+> self-service: rotate only by decrypting with the old key and re-encrypting with
+> the new one. The first admin save after setting the dedicated key transparently
+> re-encrypts legacy rows that were written with `ENCRYPTION_KEY`.
 
 ### 6.3 Edge stack
 

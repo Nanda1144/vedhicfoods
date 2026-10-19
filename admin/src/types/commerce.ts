@@ -139,17 +139,40 @@ export interface Payment {
   updatedAt: string
 }
 
+export type PaymentConfigurationState = 'disabled' | 'incomplete' | 'ready_test' | 'ready_live'
+
 export interface PaymentGatewaySettings {
   provider: PaymentProvider
   razorpayKeyId: string
   razorpayKeySecretMasked: string
   webhookSecretMasked: string
   enabledMethods: PaymentMethod[]
+  /** Operator-controlled availability of online payments. */
+  onlineEnabled: boolean
   testMode: boolean
   codEnabled: boolean
   codLimit: number
-  /** True only when both key secret + webhook secret are stored server-side. */
+  /** True when the saved key id + key secret are usable. */
   configured?: boolean
+  /** True when a webhook secret is stored (needed for Razorpay callbacks). */
+  webhookConfigured?: boolean
+  configurationState?: PaymentConfigurationState
+  keyIdMode?: 'test' | 'live' | 'unknown'
+  /** Whether the dedicated payment encryption key is configured server-side. */
+  encryptionKeyConfigured?: boolean
+  credentialError?: string | null
+  updatedAt?: string
+  updatedByName?: string | null
+  updatedByEmail?: string | null
+}
+
+export interface PaymentGatewayTestResult {
+  success: boolean
+  message: string
+  testMode: boolean
+  keyIdMode: 'test' | 'live' | 'unknown'
+  webhookSecretConfigured: boolean
+  testedAt: string
 }
 
 /* --------------------------------------------------------------- Invoices */

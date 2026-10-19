@@ -3,7 +3,7 @@ import Razorpay from 'razorpay'
 import { resolveRazorpayCredentials } from './razorpay.client'
 import { env } from '../../config/env'
 import { logger } from '../../config/logger'
-import { AppError } from '../../utils/errors'
+import { AppError, ServiceUnavailableError } from '../../utils/errors'
 import { ERROR_CODES, HTTP_STATUS } from '../../constants'
 import { prisma } from '../../config/database'
 import { AuditService } from '../../services/audit.service'
@@ -377,6 +377,28 @@ export class RazorpayService {
     // 4. Resolve the active gateway credentials (admin dashboard first, env fallback).
     //    The public key id is returned to the storefront; secrets are never exposed.
     const session = await resolveRazorpayCredentials()
+
+    // Admin switch and method allow-list are enforced server-side. A disabled or
+    // unconfigured gateway must never be reachable just because a customer still
+    // has a PENDING_PAYMENT order open in their browser.
+    if (!session.onlineEnabled || !session.configured) {
+      throw new ServiceUnavailableError(
+        'Online payments are currently unavailable for this order. Please contact support or choose Cash on Delivery.'
+      )
+    }
+    const selectedMethod = String(order.paymentMethod || '').toLowerCase()
+    if (
+      selectedMethod &&
+      selectedMethod !== 'cod' &&
+      Array.isArray(session.enabledMethods) &&
+      !session.enabledMethods.includes(selectedMethod)
+    ) {
+      throw new AppError(
+        'The selected online payment method is currently unavailable. Please choose another method.',
+        HTTP_STATUS.BAD_REQUEST,
+        ERROR_CODES.BAD_REQUEST
+      )
+    }
 
     // 4. If a Razorpay order already exists for this internal order, return it directly
     //    This supports idempotent re-initialization (e.g., user refreshes page)

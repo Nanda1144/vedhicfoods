@@ -18,7 +18,9 @@ export interface AdminNavSection {
 export const ADMIN_NAV: AdminNavSection[] = [
   {
     title: 'Dashboard',
-    items: [{ label: 'Dashboard', href: '/admin', icon: 'home', end: true }],
+    items: [
+      { label: 'Dashboard', href: '/admin', icon: 'home', end: true, permission: 'reports.read' },
+    ],
   },
   {
     title: 'Commerce',

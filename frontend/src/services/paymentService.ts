@@ -62,6 +62,15 @@ export interface PaymentVerification {
   verifiedAt: string
 }
 
+export interface PaymentConfig {
+  onlineEnabled: boolean
+  configured: boolean
+  testMode: boolean
+  enabledMethods: string[]
+  codEnabled: boolean
+  codLimit: number
+}
+
 export interface PaymentStatusResult {
   orderId: string
   orderNumber: string
@@ -112,6 +121,14 @@ export function loadRazorpayCheckout(): Promise<void> {
 }
 
 export const paymentService = {
+  /**
+   * Public, credential-free availability state for checkout. Fail closed on the
+   * caller side: if this request fails, online payment is not offered.
+   */
+  config(options?: RequestOptions): Promise<PaymentConfig> {
+    return apiFetch<PaymentConfig>('/payments/config', undefined, options)
+  },
+
   /** Creates the gateway order; amount/currency come from the database. */
   createRazorpayOrder(orderId: string, options?: RequestOptions): Promise<RazorpayInit> {
     return apiFetch<RazorpayInit>(

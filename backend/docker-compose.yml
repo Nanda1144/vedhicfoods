@@ -73,6 +73,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
+      # Dedicated key for admin-managed payment credentials. Optional at boot;
+      # when absent in production an admin cannot SAVE credentials until set.
+      PAYMENT_CREDENTIALS_ENCRYPTION_KEY: ${PAYMENT_CREDENTIALS_ENCRYPTION_KEY:-}
 
       FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL must be set}
       ADMIN_FRONTEND_URL: ${ADMIN_FRONTEND_URL:?ADMIN_FRONTEND_URL must be set}

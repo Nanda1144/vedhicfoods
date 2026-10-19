@@ -14,6 +14,7 @@ import { DiscountService } from './discount.service'
 import { DiscountableItem } from '../types/discount.types'
 import { EmailService } from './email.service'
 import { AuditService } from './audit.service'
+import { PaymentSettingsService } from './payment-settings.service'
 import { publish } from '../events/realtime'
 
 export class CheckoutService {
@@ -85,6 +86,13 @@ export class CheckoutService {
     // 2. Authenticated customer must be valid and active.
     if (!user || user.isDeleted || !user.isActive) {
       throw new ForbiddenError('Authenticated customer account is invalid or inactive')
+    }
+
+    // SECURITY/UX: do not create an online order (and reserve inventory) when the
+    // operator has disabled the gateway or the selected method. The storefront
+    // hides these options, but requests are not trusted to do so.
+    if (input.paymentMethod !== PaymentMethod.COD) {
+      await PaymentSettingsService.assertOnlinePaymentAllowed(input.paymentMethod)
     }
 
     // 3. Resolve Delivery Address & Build Immutable Snapshot

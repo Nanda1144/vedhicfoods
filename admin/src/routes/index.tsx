@@ -1,6 +1,6 @@
 import { lazy, useEffect, type ComponentType, type ReactNode } from 'react'
 import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-dom'
-import { AdminLayout, RequireAdmin } from '@/components/admin'
+import { AdminLayout, RequireAdmin, AdminHome } from '@/components/admin'
 import { AdminNotFoundPage } from '@/pages/admin/AdminNotFoundPage'
 import { RouteErrorPage } from '@/pages/admin/RouteErrorPage'
 import type { Permission } from '@/types'
@@ -67,7 +67,7 @@ const guarded = (Component: ComponentType, title: string, permission: Permission
  * which is what the duplication was evidently there to achieve.
  */
 const adminChildren: RouteObject[] = [
-  { index: true, element: <RequireAdmin>{titled(AdminDashboardPage, 'Dashboard · Vedhic Admin')}</RequireAdmin> },
+  { index: true, element: <AdminHome>{titled(AdminDashboardPage, 'Dashboard · Vedhic Admin')}</AdminHome> },
   { path: 'products', element: guarded(AdminProductsPage, 'Products · Vedhic Admin', 'products.read') },
   { path: 'products/compare', element: guarded(AdminProductsPage, 'Products · Vedhic Admin', 'products.read') },
   { path: 'products/archive', element: guarded(AdminProductsPage, 'Products · Vedhic Admin', 'products.read') },

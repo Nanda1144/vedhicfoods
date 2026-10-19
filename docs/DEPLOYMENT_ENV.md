@@ -74,10 +74,10 @@ dashboard.
 | `PORT` | Render injects this; leave it out or set `5000` |
 | `DATABASE_URL` | Your Supabase PostgreSQL URL |
 | `JWT_SECRET` | 32+ chars, unique — `openssl rand -base64 48` |
-| `ENCRYPTION_KEY` | 32+ chars, unique — encrypts stored Razorpay credentials |
+| `ENCRYPTION_KEY` | 32+ chars, unique — general-purpose AES key |
 | `FRONTEND_URL` | `https://<storefront>.vercel.app` (https, real host) |
 | `ADMIN_FRONTEND_URL` | `https://<admin>.vercel.app` (https, real host) |
-| `TRUST_PROXY` | `1` (Render terminates TLS at its own proxy) |
+| `TRUST_PROXY` | On Render you can omit it: with `RENDER=true` the app defaults it to `1`. Set it explicitly only if you add another proxy hop. |
 
 ### Required because `NODE_ENV=production`
 
@@ -87,11 +87,21 @@ unless all of these are real, non-placeholder values:
 | Variable | Notes |
 | --- | --- |
 | `JWT_SECRET`, `ENCRYPTION_KEY` | not the values shipped in `.env.example` |
-| `RAZORPAY_WEBHOOK_SECRET` | the real webhook secret |
-| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | `rzp_live_*` (or leave blank to use DB-stored creds) |
 | `FRONTEND_URL`, `ADMIN_FRONTEND_URL` | valid `https://` origins, not loopback/reserved |
-| `TRUST_PROXY` | must be set (not `false`) |
+| `TRUST_PROXY` | resolved to a non-`false` value (Render auto-defaults via `RENDER=true`) |
 | `REDIS_URL` | **required in production** — add a Render Key Value (Redis) instance and paste its internal URL |
+
+Razorpay credentials are **not** boot requirements. Configure the gateway from
+**Admin → Payment Settings**; the credentials are encrypted and stored in the
+database, so changing them needs no redeploy. `RAZORPAY_KEY_ID / _KEY_SECRET /
+_WEBHOOK_SECRET` remain as an optional bootstrap fallback for the first deploy;
+once `NODE_ENV=production` a placeholder value counts as "not configured".
+
+| Variable | Notes |
+| --- | --- |
+| `PAYMENT_CREDENTIALS_ENCRYPTION_KEY` | 32+ chars, unique. Dedicated key (AES-256-GCM, `v2` format) for admin-managed payment credentials. Needed before an admin can **save** credentials in production. Legacy rows encrypted with `ENCRYPTION_KEY` stay readable and are re-encrypted on the next save. Generating it twice or rotating it makes saved credentials unreadable. |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | optional; `rzp_live_*` when set |
+| `RAZORPAY_WEBHOOK_SECRET` | optional; the real webhook secret when set |
 
 > If you don't have Redis, live Razorpay keys, or the real domain yet: leave
 > `NODE_ENV` unset. The app then runs with development defaults and skips the

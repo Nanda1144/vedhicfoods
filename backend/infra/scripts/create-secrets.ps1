@@ -11,12 +11,14 @@
     Properties that matter:
       * IDEMPOTENT. An existing secret is left exactly as it is. Re-running the
         script never overwrites a value unless -Force is passed, because the
-        cheap-looking "just create it again" is how a working JWT_SECRET or
-        ENCRYPTION_KEY gets replaced by a fresh random one and every stored
-        session and stored payment credential stops verifying.
-      * GENERATES. JWT_SECRET and ENCRYPTION_KEY are produced from a CSPRNG when
-        you do not supply them, rather than being invented by a human or reused
-        from an example file.
+        cheap-looking "just create it again" is how a working JWT_SECRET,
+        ENCRYPTION_KEY or PAYMENT_CREDENTIALS_ENCRYPTION_KEY gets replaced by a
+        fresh random one and every stored session and stored payment credential
+        stops verifying.
+      * GENERATES. JWT_SECRET, ENCRYPTION_KEY and
+        PAYMENT_CREDENTIALS_ENCRYPTION_KEY are produced from a CSPRNG when you do
+        not supply them, rather than being invented by a human or reused from an
+        example file.
       * QUIET. No secret value is ever written to the console, to a log, or to
         the `aws` command line. Values reach Secrets Manager through a temp file
         that is deleted in a `finally` block, because a value on argv is readable
@@ -25,7 +27,8 @@
     Secrets and where their values come from, in order:
       1. -Value @{ NAME = '...' }
       2. environment variable VF_SECRET_NAME   (e.g. VF_SECRET_DATABASE_URL)
-      3. generated, for JWT_SECRET and ENCRYPTION_KEY only
+      3. generated, for JWT_SECRET, ENCRYPTION_KEY and
+         PAYMENT_CREDENTIALS_ENCRYPTION_KEY only
       4. an interactive prompt, unless -NonInteractive was given
 
     Required AWS permissions (your own credentials, not the task roles):
@@ -33,10 +36,12 @@
     secretsmanager:PutSecretValue.
 
 .NOTES
-    ENCRYPTION_KEY rotation is NOT what this script is for. Payment credentials
-    are AES-256-GCM encrypted under this key with no key version in the
-    ciphertext; -Force against ENCRYPTION_KEY makes them permanently unreadable
-    and takes online payment down. See PRODUCTION_RUNBOOK.md section 6.2.
+    Key rotation is NOT what this script is for. New payment credentials use the
+    dedicated PAYMENT_CREDENTIALS_ENCRYPTION_KEY (AES-256-GCM, v2 ciphertext)
+    and legacy rows use ENCRYPTION_KEY; the version tag identifies the format,
+    not the key. -Force against either key makes the stored credentials it
+    protects permanently unreadable and takes online payment down. See
+    PRODUCTION_RUNBOOK.md section 6.2.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File backend\infra\scripts\create-secrets.ps1 -WhatIf
@@ -81,10 +86,11 @@ if ($Region) { $script:AwsArgs = @('--region', $Region) }
 $script:SecretSpecs = @(
     @{ Name = 'DATABASE_URL';           Generated = $false; Required = $true;  Description = 'PostgreSQL connection string used by Prisma' }
     @{ Name = 'JWT_SECRET';             Generated = $true;  Required = $true;  Description = 'HS256 signing key for access and refresh tokens' }
-    @{ Name = 'ENCRYPTION_KEY';         Generated = $true;  Required = $true;  Description = 'Source key for AES-256-GCM encryption of stored payment credentials' }
-    @{ Name = 'RAZORPAY_KEY_ID';        Generated = $false; Required = $false; Description = 'Razorpay key id; may be empty when payments are disabled' }
-    @{ Name = 'RAZORPAY_KEY_SECRET';    Generated = $false; Required = $false; Description = 'Razorpay key secret; may be empty when payments are disabled' }
-    @{ Name = 'RAZORPAY_WEBHOOK_SECRET'; Generated = $false; Required = $true;  Description = 'Signature secret for inbound Razorpay webhooks' }
+    @{ Name = 'ENCRYPTION_KEY';         Generated = $true;  Required = $true;  Description = 'General-purpose AES-256-GCM source key (legacy payment credentials)' }
+    @{ Name = 'PAYMENT_CREDENTIALS_ENCRYPTION_KEY'; Generated = $true; Required = $true; Description = 'Dedicated AES-256-GCM key for admin-managed payment credentials' }
+    @{ Name = 'RAZORPAY_KEY_ID';        Generated = $false; Required = $false; Description = 'Optional bootstrap fallback; prefer Admin -> Payment Settings' }
+    @{ Name = 'RAZORPAY_KEY_SECRET';    Generated = $false; Required = $false; Description = 'Optional bootstrap fallback; prefer Admin -> Payment Settings' }
+    @{ Name = 'RAZORPAY_WEBHOOK_SECRET'; Generated = $false; Required = $false; Description = 'Optional; admin-managed value is preferred' }
     @{ Name = 'BREVO_API_KEY';          Generated = $false; Required = $false; Description = 'Brevo API key; may be empty when EMAIL_PROVIDER=ses' }
 )
 
@@ -281,11 +287,12 @@ if ($script:Failures.Count -eq 0 -and $resolved.Count -gt 0) {
 
         if ($arn) {
             if ($Force) {
-                if ($item.Name -eq 'ENCRYPTION_KEY') {
-                    Write-Host "`n  WARNING: overwriting ENCRYPTION_KEY." -ForegroundColor Red
-                    Write-Host "  Stored payment credentials are encrypted under this key with no key" -ForegroundColor Red
-                    Write-Host "  version in the ciphertext. Without first re-encrypting them under the" -ForegroundColor Red
-                    Write-Host "  new value they become permanently unreadable and online payment stops." -ForegroundColor Red
+                if ($item.Name -eq 'ENCRYPTION_KEY' -or $item.Name -eq 'PAYMENT_CREDENTIALS_ENCRYPTION_KEY') {
+                    Write-Host "`n  WARNING: overwriting $($item.Name)." -ForegroundColor Red
+                    Write-Host "  Stored payment credentials are encrypted under this key. The ciphertext" -ForegroundColor Red
+                    Write-Host "  version tag identifies the format, not the key, so without first" -ForegroundColor Red
+                    Write-Host "  re-encrypting them under the new value they become permanently" -ForegroundColor Red
+                    Write-Host "  unreadable and online payment stops." -ForegroundColor Red
                 }
                 if ($PSCmdlet.ShouldProcess("$Prefix/$($item.Name)", 'Overwrite existing secret value')) {
                     try {

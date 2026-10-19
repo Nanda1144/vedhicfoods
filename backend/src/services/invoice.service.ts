@@ -80,6 +80,30 @@ export class InvoiceService {
   private static readonly BUSINESS_UTC_OFFSET_MINUTES = 330
 
   /**
+   * Renders invoice data to a PDF, translating the generator's data-integrity
+   * assertions into a 422 rather than an opaque 500.
+   *
+   * `InvoiceGenerator.validateInvoiceData` deliberately refuses to print a
+   * document whose totals do not reconcile with its line items — a legacy order
+   * saved with no `order_items` rows is the usual cause. That is a data problem
+   * the operator can see and act on, not a server fault, so it must not surface
+   * as "Internal Server Error".
+   */
+  private static async renderPdf(render: () => Promise<Buffer>): Promise<Buffer> {
+    try {
+      return await render()
+    } catch (error: any) {
+      if (error instanceof AppError) throw error
+      logger.error({ err: error?.message }, 'Invoice PDF generation failed')
+      throw new AppError(
+        'This invoice cannot be generated because its order data is incomplete or its totals do not reconcile.',
+        HTTP_STATUS.UNPROCESSABLE_ENTITY,
+        ERROR_CODES.VALIDATION_ERROR
+      )
+    }
+  }
+
+  /**
    * Generates the next sequential invoice number.
    * Format: INV-YYYY-XXXXXX (e.g., INV-2026-000001)
    */
@@ -526,7 +550,7 @@ export class InvoiceService {
     }
 
     const invoiceData = this.buildInvoiceData(invoice.order, invoice.invoiceNumber)
-    const buffer = await InvoiceGenerator.generateA4Pdf(invoiceData)
+    const buffer = await this.renderPdf(() => InvoiceGenerator.generateA4Pdf(invoiceData))
 
     return { buffer, filename: `${invoice.invoiceNumber}.pdf` }
   }
@@ -570,7 +594,9 @@ export class InvoiceService {
     const documents = invoices.map((invoice) =>
       this.buildInvoiceData(invoice.order, invoice.invoiceNumber)
     )
-    const buffer = await InvoiceGenerator.generateBulkA4Pdf(documents, `Invoices ${date}`)
+    const buffer = await this.renderPdf(() =>
+      InvoiceGenerator.generateBulkA4Pdf(documents, `Invoices ${date}`)
+    )
 
     logger.info(
       { date, invoiceCount: invoices.length },
@@ -643,7 +669,7 @@ export class InvoiceService {
 
     // Generate new PDF
     const invoiceData = this.buildInvoiceData(invoice.order, invoice.invoiceNumber)
-    const pdfBuffer = await InvoiceGenerator.generateA4Pdf(invoiceData)
+    const pdfBuffer = await this.renderPdf(() => InvoiceGenerator.generateA4Pdf(invoiceData))
 
     // Upload to S3 (overwrites existing)
     const s3Key = `${this.S3_KEY_PREFIX}/${invoice.userId}/${invoice.invoiceNumber}.pdf`

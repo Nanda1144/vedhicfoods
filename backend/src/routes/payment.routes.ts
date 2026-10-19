@@ -4,6 +4,13 @@ import { authenticateOrderAccess } from '../middleware/order-auth.middleware'
 
 const router = Router()
 
+/**
+ * GET /api/v1/payments/config
+ *
+ * Public payment availability for the storefront checkout. Contains no secrets.
+ */
+router.get('/config', PaymentController.getPaymentConfig)
+
 // ==========================================
 // RAZORPAY WEBHOOK (No auth — Razorpay calls this directly)
 // Raw body capture is critical for HMAC signature verification.

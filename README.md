@@ -1,224 +1,491 @@
-# VEDHIC FOODS — Master Platform Architecture & Documentation
+# VEDHIC FOODS — Platform Architecture & Developer Guide
 
-Welcome to **VEDHIC FOODS**, a modern organic and traditional food e-commerce platform designed for production deployment on **AWS Cloud** with **PostgreSQL**, **Node.js/TypeScript**, **Amazon SES** (with **Brevo** as a fallback transport), and **Razorpay Payment Gateway**.
+**VEDHIC FOODS** is a production-grade organic and traditional food e-commerce
+platform. It ships as a **monorepo** with two independently deployed single-page
+applications (a customer storefront and a staff/admin console) and one Express
+REST API backed by PostgreSQL via Prisma.
+
+- **Spas (Vercel):** React 19 + TypeScript + Vite
+- **API (Render):** Node.js + Express + TypeScript, mounted under `/api/v1`
+- **Data:** PostgreSQL + Prisma ORM
+- **Payments:** Razorpay · **Email:** Amazon SES (Brevo fallback) · **Media:** S3 + CloudFront
 
 ---
 
-## 1. Master System Architecture
+## Contents
 
-The platform is designed around four decoupled, dedicated modules:
+1. [System Overview](#1-system-overview)
+2. [High-Level Architecture](#2-high-level-architecture)
+3. [Deployment Topology](#3-deployment-topology)
+4. [Monorepo Structure](#4-monorepo-structure)
+5. [Runtime Request Lifecycle](#5-runtime-request-lifecycle)
+6. [Backend Module Map](#6-backend-module-map)
+7. [Domain Model](#7-domain-model)
+8. [Roles & Permissions (RBAC)](#8-roles--permissions-rbac)
+9. [Environments & Configuration](#9-environments--configuration)
+10. [Getting Started](#10-getting-started)
+11. [Root Scripts](#11-root-scripts)
+12. [Testing](#12-testing)
+13. [Deployment](#13-deployment)
+14. [Recent Engineering Changes](#14-recent-engineering-changes)
+15. [Roadmap](#15-roadmap)
+
+---
+
+## 1. System Overview
+
+| Layer | Technology | Location | Runtime port |
+| --- | --- | --- | --- |
+| Storefront SPA | React 19, Vite, React Router 7 | `frontend/` | `5173` |
+| Admin SPA | React 19, Vite, React Router 7 | `admin/` | `5174` |
+| REST API | Node 22, Express 4, TypeScript, Zod | `backend/` | `5000` |
+| Data access | PostgreSQL 16 + Prisma 6 | `database/` | `5432` |
+| Cache / rate-limit store | Redis (Render Key Value) | — | `6379` |
+| Object storage | Amazon S3 behind CloudFront (OAC) | `backend/src/integrations` | — |
+
+The two SPAs are deliberate **separate origins**: serving the admin console from
+the storefront origin would let any storefront XSS inherit admin session reach.
+Both origins are enumerated in the API's CORS allowlist (`FRONTEND_URL` /
+`ADMIN_FRONTEND_URL`) and there is no wildcard fallback in production.
+
+---
+
+## 2. High-Level Architecture
 
 ```mermaid
 graph LR
-    subgraph Client Applications
-        Storefront[Customer Storefront frontend/]
-        AdminPortal[Admin Portal admin/]
+    subgraph "Client Applications"
+        Storefront["Storefront SPA<br/>frontend/ · React 19 + Vite"]
+        AdminPortal["Admin Console SPA<br/>admin/ · React 19 + Vite"]
     end
 
-    subgraph Backend Layer
-        RESTAPI[Express REST API backend/ :5000]
+    subgraph "API Layer"
+        REST["Express REST API<br/>backend/ · /api/v1 · :5000"]
+        MW["Middleware chain<br/>helmet · cors · rate-limit · auth · rbac"]
+        SVC["Service layer<br/>business rules · transactions · audit"]
     end
 
-    subgraph Data & Cloud Services
-        DB[(PostgreSQL database/)]
-        Email[SES / Brevo Email & A4 Invoices]
-        Razorpay[Razorpay Gateway]
+    subgraph "Data & External Services"
+        DB[("PostgreSQL<br/>database/ · Prisma")]
+        Redis[("Redis<br/>cache + rate-limit store")]
+        SES["SES / Brevo<br/>transactional email"]
+        RZP["Razorpay<br/>payments + webhooks"]
+        S3["S3 + CloudFront<br/>product media · invoices"]
     end
 
-    Storefront -->|Browse & Checkout| RESTAPI
-    AdminPortal -->|Product CRUD & Secrets| RESTAPI
-    RESTAPI -->|Prisma Client| DB
-    RESTAPI -->|Send Invoices| Email
-    RESTAPI -->|Verify Orders| Razorpay
+    Storefront -->|"HTTPS JSON"| REST
+    AdminPortal -->|"HTTPS JSON"| REST
+    REST --> MW --> SVC
+    SVC -->|"Prisma Client"| DB
+    SVC -->|"cache, throttling"| Redis
+    SVC -->|"invoices, notifications"| SES
+    SVC -->|"orders, signature verify"| RZP
+    SVC -->|"presigned upload · media URLs"| S3
 ```
 
 ---
 
-## 2. Directory Breakdown & Isolation Rules
+## 3. Deployment Topology
 
+Current target: **SPAs on Vercel, API + data on Render**. The repository also
+contains AWS CloudFormation templates (`backend/infra/cloudformation/`) as an
+alternative ECS Fargate deployment; the application code is identical for both.
+
+```mermaid
+graph TB
+    subgraph Users
+        Customer["Customer"]
+        Staff["Staff / Admin"]
+    end
+
+    subgraph "Vercel (static)"
+        FE["vedhicfoods.com<br/>storefront build → dist/"]
+        ADM["admin.vedhicfoods.com<br/>admin build → dist/"]
+    end
+
+    subgraph "Render"
+        API["vedhicfoods-api<br/>node backend/dist/bootstrap.js<br/>health: /api/v1/health"]
+        PG[("Render Postgres")]
+        KV[("Render Key Value (Redis)")]
+    end
+
+    subgraph "External"
+        RZP["Razorpay"]
+        MAIL["SES (or Brevo)"]
+        MEDIA["S3 + CloudFront"]
+    end
+
+    Customer --> FE
+    Staff --> ADM
+    FE -->|"VITE_API_URL /api/v1"| API
+    ADM -->|"VITE_API_URL /api/v1"| API
+    API --> PG
+    API --> KV
+    API --> RZP
+    API --> MAIL
+    API --> MEDIA
 ```
+
+Key deployment invariants:
+
+- The API build **must run from the repo root** (`rootDir: .`): `backend`
+  depends on the `vedhicfoods-database` npm workspace, which npm only links from
+  the root. Build command: `npm ci --include=dev && npm run build:database && npm run build:backend`.
+- `NODE_ENV=production` makes `backend/src/config/env.ts` **refuse to boot**
+  until secrets and origins are real (see [§9](#9-environments--configuration)).
+- Each Vite SPA refuses to build a production bundle unless `VITE_API_URL` is
+  `https://…` and ends in `/api/v1` (guarded in `frontend/vite.config.ts` and
+  `admin/vite.config.ts`).
+- SPA deep links rely on `vercel.json` rewrites (`/… → /index.html`).
+
+See [`docs/DEPLOYMENT_ENV.md`](docs/DEPLOYMENT_ENV.md) for the variable-by-variable guide.
+
+---
+
+## 4. Monorepo Structure
+
+```text
 vedhifoods/
-├── frontend/             # Customer Storefront (React 19, TypeScript, Vite)
-├── admin/                # Dedicated Admin Portal (React 19, TypeScript, Vite)
-├── backend/              # Node.js / Express / TypeScript REST API (/api/v1)
-├── database/             # PostgreSQL Prisma Schemas, Seeds, Client, & Documentation
-├── docs/                 # Product, architecture and implementation documentation
-├── package.json          # Monorepo task runner & scripts
-└── README.md             # Master platform architecture & documentation
+├── frontend/                     # Customer storefront (own package.json + lockfile)
+│   ├── src/
+│   │   ├── components/           #   presentational + layout components
+│   │   ├── pages/                #   route-level screens (catalog, cart, checkout, account)
+│   │   ├── services/             #   API client (http.ts) + domain services
+│   │   ├── context/              #   auth, cart, settings, toast providers
+│   │   ├── hooks/                #   useAsync, useRealtime, …
+│   │   ├── styles/               #   design tokens + layout CSS
+│   │   └── config/               #   site config, hero image discovery
+│   ├── vercel.json               #   SPA rewrite rules
+│   └── vite.config.ts            #   alias '@', '@assets' → repo-root assests/
+│
+├── admin/                        # Staff/admin console (own package.json + lockfile)
+│   ├── src/
+│   │   ├── pages/admin/          #   dashboard, products, orders, staff, security, …
+│   │   ├── components/admin/     #   AdminLayout, DataTable, guards, nav
+│   │   ├── services/             #   adminService, adminAuthService, http.ts (GET coalescing)
+│   │   ├── context/              #   AdminAuthContext, SettingsContext
+│   │   └── data/                 #   navigation, permission metadata
+│   ├── vercel.json               #   SPA rewrite rules
+│   └── vite.config.ts            #   same production API-URL guard
+│
+├── backend/                      # Express REST API (npm workspace)
+│   ├── src/
+│   │   ├── bootstrap.ts          #   entrypoint: resolve secrets, then load server
+│   │   ├── server.ts             #   HTTP server, graceful shutdown, sweeps
+│   │   ├── app.ts                #   express app, CORS, security middleware
+│   │   ├── config/               #   env (Zod), database, logger, secrets-manager
+│   │   ├── routes/               #   /api/v1 router tree
+│   │   ├── controllers/          #   request parsing + response shaping
+│   │   ├── services/             #   business logic, transactions, audit
+│   │   ├── middleware/           #   auth, rbac, rate-limit, error handling
+│   │   ├── integrations/         #   razorpay, ses, s3
+│   │   ├── utils/                #   errors, crypto, client-ip, privilege, pagination
+│   │   └── types/                #   Zod schemas + shared types
+│   ├── tests/                    #   unit/ + integration/ (Vitest + Supertest)
+│   ├── infra/                    #   cloudformation/, ecs-task-definition.json, s3-cors.json
+│   └── Dockerfile                #   multi-stage production image (root build context)
+│
+├── database/                     # Single source of truth for schema (npm workspace)
+│   ├── prisma/
+│   │   ├── schema.prisma         #   44 models · 18 enums
+│   │   └── migrations/           #   14 migration directories (history)
+│   ├── index.ts / client.ts      #   re-exports + PrismaClient singleton
+│   ├── seed.ts                   #   RBAC, payment settings, catalogue, bootstrap admin
+│   └── backup.Dockerfile         #   pg_dump one-off task image
+│
+├── docs/                         # architecture, audit, deployment documentation
+├── .github/workflows/            # ci.yml · deploy.yml · db-backup.yml
+├── render.yaml                   # Render Blueprint (API + Postgres + Key Value)
+├── package.json                  # workspace root + task runner
+└── README.md
 ```
 
-### Module Responsibilities
-
-1. **[`frontend/`](frontend)**:
-   * Customer-only shopping experience.
-   * **Zero Admin Exposure**: No admin buttons, links, or login screens exist in the customer navigation or footer.
-   * Runs independently on port `5173`.
-   * Real-time catalog queries directly reflect admin updates.
-
-2. **[`admin/`](admin)**:
-   * Dedicated store management portal.
-   * Hosted on its own subdomain or port `5174`.
-   * Direct URL access (`/` or `/login`).
-   * Manages products, categories, stock, orders, and payment gateway credentials.
-
-3. **[`backend/`](backend)**:
-   * Clean layered Express REST API (`/api/v1`).
-   * Handles 32-byte AES-256-GCM encryption for Razorpay credentials.
-   * Formats A4 PDF tax invoices and dispatches them via Amazon SES (Brevo fallback).
-   * Tested with Vitest: 45 backend test files (~1,000 cases) plus 4 admin portal test files.
-
-4. **[`database/`](database)**:
-   * PostgreSQL schema definitions (`schema.prisma`).
-   * Database client singleton and seed scripts.
-   * Prisma schema and migrations (14 migrations, 44 models, 18 enums). The
-     CloudFormation RDS template defaults to `ap-south-1` (Mumbai) and local
-     development uses the loopback database from `backend/docker-compose.yml`;
-     the managed deployment runs on Supabase PostgreSQL (`ap-northeast-1`).
+`frontend/` and `admin/` are **not** npm workspaces — each carries its own
+lockfile and deploys as an independent static bundle. Only `database/` and
+`backend/` are workspaces, so a root `npm ci` installs exactly what the API needs.
 
 ---
 
-## 3. Step-by-Step Execution Guide
+## 5. Runtime Request Lifecycle
 
-### Prerequisites
-* **Node.js** >= 20.x
-* **PostgreSQL** 15+ database URL
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as Admin SPA
+    participant API as Express (/api/v1)
+    participant MW as Middleware
+    participant C as Controller
+    participant S as Service
+    participant DB as PostgreSQL (Prisma)
+
+    U->>API: PATCH /admin/staff/:id  (Bearer access token)
+    API->>MW: helmet → cors(allowlist) → rate-limit → authenticate → requirePermission
+    MW->>C: req.user populated, permission granted
+    C->>C: validate body with Zod schema
+    C->>S: service call
+    S->>DB: transaction / query
+    DB-->>S: rows
+    S->>S: audit record (actor, action, entity, no secrets)
+    S-->>C: result
+    C-->>U: 200 { success: true, ... }
+```
+
+Every state-changing endpoint records an audit entry, and errors are masked by a
+central error middleware so internal details never leak to the client.
 
 ---
 
-### Step 1: Initialize Database
+## 6. Backend Module Map
+
+All routers mount under `/api/v1` (`backend/src/routes/index.ts`):
+
+| Area | Base path | Notes |
+| --- | --- | --- |
+| Health | `/health`, `/health/ready` | liveness + readiness probes |
+| Auth | `/auth` | login, refresh, change-password, reset, verify |
+| Settings | `/settings` | public-safe settings subset |
+| Contact | `/contact` | unauthenticated, rate-limited |
+| Support | `/support` | customer tickets (owner-scoped) |
+| Notifications | `/notifications` | in-app notification centre |
+| Content | `/content` | testimonials, FAQs, reviews, newsletter |
+| Events | `/events` | Server-Sent Events real-time stream |
+| Catalog | `/products`, `/categories` | public storefront |
+| Cart / Checkout | `/cart`, `/checkout` | reservations, idempotency |
+| Orders | `/orders` | customer + staff order flow |
+| Customer | `/customer` | profile, addresses |
+| Discounts | `/coupons`, `/promotions` | |
+| Payments | `/payments`, `/payments/razorpay/webhook` | raw-body webhook verification |
+| Webhooks | `/webhooks/email/sns` | SES bounce/complaint maintenance |
+| Invoices | `/invoices`, `/invoices/reconciliation` | A4 PDF + GST reporting |
+| Admin | `/admin` | staff console API (RBAC-gated) |
+
+Layering is strictly one-directional:
+
+```text
+routes → middleware → controllers → services → Prisma (database/) → PostgreSQL
+```
+
+---
+
+## 7. Domain Model
+
+Representative subset of the 44 Prisma models (18 enums):
+
+```mermaid
+erDiagram
+    USER ||--o{ USER_ROLE : has
+    ROLE ||--o{ USER_ROLE : grants
+    ROLE ||--o{ ROLE_PERMISSION : includes
+    PERMISSION ||--o{ ROLE_PERMISSION : in
+    USER ||--o{ USER_PERMISSION : "overrides"
+    USER ||--o{ ORDER : places
+    USER ||--o{ ADDRESS : owns
+    ORDER ||--o{ ORDER_ITEM : contains
+    PRODUCT ||--o{ ORDER_ITEM : "ordered as"
+    CATEGORY ||--o{ PRODUCT : classifies
+    ORDER ||--o{ PAYMENT : "paid by"
+    ORDER ||--|| INVOICE : "generates"
+    ORDER ||--o{ DELIVERY : "shipped by"
+    USER ||--o{ CART : owns
+    CART ||--o{ CART_ITEM : contains
+    PRODUCT ||--o{ CART_ITEM : "added as"
+    USER ||--o{ SUPPORT_TICKET : opens
+    USER ||--o{ NOTIFICATION : receives
+    USER ||--o{ AUDIT_LOG : "acts in"
+```
+
+Prisma's generated client lives in `database/` and is exchanged with the backend
+through the `vedhicfoods-database` workspace package. Sensitive values (Razorpay
+credentials) are encrypted with AES-256-GCM before storage.
+
+---
+
+## 8. Roles & Permissions (RBAC)
+
+Four roles with a strict rank hierarchy. Higher ranks manage lower ones:
+
+```mermaid
+graph TD
+    OWNER["OWNER — rank 3<br/>full control, manages everyone"]
+    ADMIN["ADMIN — rank 2<br/>bypasses slug checks"]
+    STAFF["STAFF — rank 1<br/>exactly the granted permission slugs"]
+    CUSTOMER["CUSTOMER — rank 0<br/>storefront only, never in staff management"]
+
+    OWNER --> ADMIN --> STAFF --> CUSTOMER
+```
+
+- Permission slugs (e.g. `staff.create`, `orders.update`) gate routes via
+  `requirePermission`. OWNER/ADMIN bypass slug checks; STAFF is limited to its
+  effective set (role defaults, or a per-user grant set that replaces them).
+- **Staff accounts are administrator-provisioned.** An admin creates the account
+  and sets the login password directly — no invitation email is sent. Staff sign
+  in with those credentials and **cannot change their own password**; an admin
+  resets it from Staff management. Owners and admins retain self-service
+  password rotation. This rule is enforced server-side, not just in the UI.
+
+---
+
+## 9. Environments & Configuration
+
+The backend loads, in priority order: real environment variables → `.env.<NODE_ENV>`
+→ `.env`. Real variables always win (so Render/ECS overrides work without files).
+
+With `NODE_ENV=production` the boot guard **rejects** missing or placeholder
+values for:
+
+| Variable | Rule |
+| --- | --- |
+| `JWT_SECRET` | ≥ 32 chars, unique |
+| `ENCRYPTION_KEY` | ≥ 32 chars, unique (encrypts stored Razorpay creds) |
+| `RAZORPAY_WEBHOOK_SECRET` | ≥ 16 chars, real |
+| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | real (`rzp_live_*`) or blank (DB-stored) |
+| `FRONTEND_URL` / `ADMIN_FRONTEND_URL` | explicit `https://` origins, not loopback/reserved |
+| `TRUST_PROXY` | must be set (e.g. `1`) |
+| `REDIS_URL` | required in production |
+
+Copy key names from the matching template — never deploy an `.env` file:
+
+| Target | Template |
+| --- | --- |
+| Storefront (Vercel) | `frontend/.env.production` |
+| Admin (Vercel) | `admin/.env.production` |
+| API (Render) | `backend/.env.production.example` |
+| Database / migrations | `database/.env.example` |
+
+---
+
+## 10. Getting Started
+
+**Prerequisites:** Node.js ≥ 20 (22 recommended), PostgreSQL 15+ (16 recommended).
+
 ```bash
-cd database
-npm install
-npm run prisma:validate
-npm run prisma:migrate    # dev workflow; production uses `npm run prisma:deploy`
-npm run prisma:seed
-cd ..
+# 1) Install workspaces + both SPAs
+npm ci
+npm ci --prefix frontend
+npm ci --prefix admin
+
+# 2) Generate the Prisma client and prepare the database
+npm run prisma:generate
+npm run prisma:migrate      # dev; production uses `npm run prisma:deploy`
+npm run prisma:seed         # only creates the bootstrap admin when SEED_ADMIN_PASSWORD is set
+
+# 3) Run the stack (each in its own terminal)
+npm run dev:backend         # http://localhost:5000/api/v1
+npm run dev:frontend        # http://localhost:5173
+npm run dev:admin           # http://localhost:5174
 ```
-* Validates the Prisma schema (44 models, 18 enums).
-* Applies migrations from `database/prisma/migrations/` (14 migrations).
-* Seeds RBAC roles/permissions, encrypted payment settings and the catalogue.
-* No default credentials are shipped: the seed creates a bootstrap admin only
-  when `SEED_ADMIN_PASSWORD` is set, and warns otherwise. See `database/README.md`.
 
----
+The seed creates RBAC roles/permissions, encrypted payment settings and the
+catalogue. No default credentials ship: the bootstrap admin appears only when
+`SEED_ADMIN_PASSWORD` is set (see [`database/README.md`](database/README.md)).
 
-### Step 2: Start Backend REST API
-```bash
-cd backend
-npm install
-npm run build
-npm run dev
-```
-* Express API starts at `http://localhost:5000/api/v1`.
-* Test health endpoint: `curl http://localhost:5000/api/v1/health`.
-
----
-
-### Step 3: Start Customer Storefront
-In a new terminal:
-```bash
-cd frontend
-npm install
-npm run dev
-```
-* Storefront starts at `http://localhost:5173`.
-* Customer can browse catalog, add to cart, and checkout with Cash on Delivery or Razorpay.
-
----
-
-### Step 4: Start Admin Portal
-In a new terminal:
-```bash
-cd admin
-npm install
-npm run dev
-```
-* Admin portal starts at `http://localhost:5174`.
-* Sign in at `http://localhost:5174/login`. The bootstrap admin email is
-  `admin@vedhicfoods.com`, created only when the seed ran with
-  `SEED_ADMIN_PASSWORD` set (see Step 1).
-* Update products and payment gateway settings. Changes immediately persist to PostgreSQL and reflect on `http://localhost:5173`.
-
----
-
-## 4. Root Monorepo Shortcuts
-
-From the workspace root directory:
+Verify the API is alive:
 
 ```bash
-# Development
-npm run dev:backend       # Starts Backend on port 5000
-npm run dev:frontend      # Starts Storefront on port 5173
-npm run dev:admin         # Starts Admin Portal on port 5174
-
-# Production Builds
-npm run build:backend     # Compiles TypeScript backend to dist/
-npm run build:frontend    # Compiles Storefront to frontend/dist/
-npm run build:admin       # Compiles Admin Portal to admin/dist/
-npm run build             # Compiles all three services
-
-# Testing
-npm run test              # Runs the backend Vitest suite (45 files, ~1,000 cases)
+curl http://localhost:5000/api/v1/health
 ```
 
 ---
 
-## 5. Audit of Cleaned Duplicates & Completed Files
+## 11. Root Scripts
 
-### Removed Duplicates:
-- ❌ **Root `src/`**: Removed monolithic combined codebase. Separated cleanly into `frontend/src/` and `admin/src/`.
-- ❌ **`frontend/src/pages/admin/` & `frontend/src/components/admin/`**: Removed all 23 admin pages and components from customer storefront.
-- ❌ **`frontend/src/services/admin*`**: Removed administrative services from customer storefront.
-- ❌ **`admin/src/pages/customer/`**: Removed customer storefront pages and customer layout from admin portal.
-- ❌ **`admin/src/pages/admin/PlaceholderFactory.tsx`**: Removed unused legacy placeholder.
-- ❌ **Root `backend/` loose Python files**: Cleaned loose `app/`, `instance/`, `migrations/`, `config.py`, `run.py`, `seed_db.py`, `wsgi.py`. No Python sources or virtualenv remain under `backend/` (`backend/tests/` is TypeScript/Vitest only; there is no `backend/python_archive/`).
-
-### Completed & Added Files:
-- ✅ [`backend/src/controllers/payment-settings.controller.ts`](backend/src/controllers/payment-settings.controller.ts): Complete 32-byte AES-256 encryption and secret masking.
-- ✅ [`backend/src/controllers/product.controller.ts`](backend/src/controllers/product.controller.ts): Complete product CRUD with PostgreSQL persistence and soft-delete.
-- ✅ [`backend/src/controllers/order.controller.ts`](backend/src/controllers/order.controller.ts): Added checkout, A4 invoice creation, SES email dispatch (Brevo fallback), order status update, and `getOrder` lookup.
-- ✅ [`backend/src/routes/order.routes.ts`](backend/src/routes/order.routes.ts): Mounted `/checkout`, `/`, and `/:orderNumberOrId`.
-- ✅ [`admin/src/pages/admin/AdminNotFoundPage.tsx`](admin/src/pages/admin/AdminNotFoundPage.tsx): Created dedicated admin 404 page.
-- ✅ [`database/package.json`](database/package.json): Standalone database migration runner.
-- ✅ All four folders have individual, comprehensive `README.md` files with diagrams, step-by-step guides, and TODO lists.
-
-### QA hardening pass (latest):
-- ✅ **Admin dashboard** — `GET /admin/dashboard` now returns every widget in one aggregate payload (date-bounded 30-day revenue, server-side weekly series, top products, category performance, real lifetime spend). The console no longer fans out to paginated `fetchAll` chains, which fixes both several wrong figures and the recurring 60s request timeouts.
-- ✅ **Cash on Delivery** — enabled in the storefront and admin payment selectors (the backend COD path already existed and was unreachable from the UI).
-- ✅ **Error boundaries** — storefront now has a route-level `errorElement` plus a top-level `ErrorBoundary`, so a page crash no longer blanks the whole app.
-- ✅ **Removed all mock/fallback data** — deleted the mock admin content service, the static 27-product catalog, the 600-line admin fixture dataset and the offline testimonial/FAQ/review fallbacks. FAQs, testimonials, reviews, support and the catalogue are now served exclusively by the API.
-- ✅ **Correctness fixes** in the admin console order timeline and discount mapping.
-- ✅ **Cleanup** — removed debug leftovers (`tmp-http.ts`, ad-hoc `dbcheck`/`testconn` scripts, the local `.pgtest/` Postgres data dir) and reconciled the CloudWatch log-group IAM policy with the ECS task definition.
-
-### AWS deployment readiness pass (latest):
-- ✅ **ECS task definition** — dropped the invalid `dependsOn` key from every `secrets` entry (the ECS `Secret` shape is `{name, valueFrom}` only, so the old template was rejected), and added `AWS_S3_PUBLIC_BASE_URL`.
-- ✅ **Container image** — the `prod-deps` stage now installs the Prisma CLI and runs `prisma generate`, so the migration task can run and the runtime has a generated client.
-- ✅ **CI/CD** — the integration job exports `SEED_ADMIN_PASSWORD`/`SEED_STAFF_PASSWORD` (the seed only creates these accounts when set, and ~15 RBAC suites log in as them); the deploy workflow's migration override now calls `./node_modules/.bin/prisma`.
-- ✅ **Media serving** — new `AWS_S3_PUBLIC_BASE_URL` (CloudFront origin) is wired through `env.ts` and `S3Service.buildPublicUrl`, so product images and invoices resolve through the OAC distribution instead of a private bucket URL.
-- ✅ **Prod secret guard** — the boot-time guard now also rejects `REPLACE_ME_*` / `placeholder` / `CHANGEME` values, which are long enough to pass the length check but are published in `.env.production.example`.
-- ✅ **RDS monitoring** — pinned `DBInstanceIdentifier: vedhicfoods` so the CloudWatch alarms and DB-log metric filters (which default that dimension) monitor a real resource.
-- ✅ **Invoice email** — routed through `EmailQueue` (retry, backoff, bounce/complaint suppression) with a dedupe key; online-payment invoices are no longer sent before capture, while COD orders still get theirs at checkout (they never reach the paid-invoice path).
-- ✅ **Product images** — the admin uploader now downscales on a canvas to fit the 1 MB API body cap, so real multi-megabyte photos no longer fail with a 413.
-- ✅ **Payment + invoices** — checkout sends an idempotency key; a failed online payment now releases the stock reservation; the storefront invoice adapter and the admin invoice download links were repaired.
+| Command | Description |
+| --- | --- |
+| `npm run dev:backend` / `dev:frontend` / `dev:admin` | start each service in watch mode |
+| `npm run build` | build database → backend → frontend → admin |
+| `npm run build:database` | `prisma generate` + `tsc` for the database workspace |
+| `npm run build:backend` / `build:frontend` / `build:admin` | build one target |
+| `npm run typecheck` | typecheck database, backend, frontend, admin |
+| `npm run lint` | oxlint across all workspaces |
+| `npm run test` | backend Vitest suite |
+| `npm run prisma:migrate` / `prisma:deploy` / `prisma:seed` | migration & seed helpers |
 
 ---
 
-## 6. Master TODO List
+## 12. Testing
+
+| Suite | Command | Scope |
+| --- | --- | --- |
+| Backend unit (23 files · 232 tests) | `npm run test:unit --workspace vedhicfoods-backend` | pure logic, crypto, RBAC, IP resolution |
+| Backend integration (52 files · 1,363 tests) | `npm run test:integration --workspace vedhicfoods-backend` | API + real PostgreSQL (disposable DB guard) |
+| Admin (11 files · 116 tests) | `npm test --prefix admin` | console components/services |
+
+The integration suite refuses to run against anything that looks managed or
+production (`backend/tests/integration/_safety.ts`) and truncates between
+suites — point `TEST_DATABASE_URL` at a throwaway database. CI runs unit tests
+unconditionally and the integration suite against a throwaway Postgres service
+container (`.github/workflows/ci.yml`).
+
+---
+
+## 13. Deployment
+
+- **Storefront & admin → Vercel.** Root Directory `frontend` / `admin`,
+  framework Vite, output `dist`. Set `VITE_API_URL` (Production scope) to the
+  Render API URL ending in `/api/v1`. `vercel.json` provides SPA rewrites.
+- **API → Render.** Root Directory = repo root; build
+  `npm ci --include=dev && npm run build:database && npm run build:backend`;
+  start `node backend/dist/bootstrap.js`; health check `/api/v1/health`.
+  `render.yaml` provisions API + Postgres + Key Value in one Blueprint.
+- **Migrations** run via the Render pre-deploy command (`npm run prisma:deploy`)
+  or manually against the external database URL.
+
+Full walkthrough and variable mapping: [`docs/DEPLOYMENT_ENV.md`](docs/DEPLOYMENT_ENV.md).
+
+---
+
+## 14. Recent Engineering Changes
+
+**Staff lifecycle**
+- Staff accounts are created directly by an admin (no invitation email). The
+  console labels and flow now say "Add staff" / "Create account", and the
+  account is active immediately so the staff member can sign in with the
+  credentials the admin set.
+- Staff have **no self-service password change**: the Security page shows an
+  admin-managed notice instead of the form, and `PUT /auth/change-password`
+  returns `403` for the STAFF role (audited as `PASSWORD_CHANGE_BLOCKED`).
+  Owners/admins keep self-service rotation.
+
+**CI hardening**
+- Backend/database workspace builds generate the Prisma client before `tsc`, so
+  a clean runner no longer fails on unresolved `@prisma/client` or the
+  `vedhicfoods-database` package.
+- CI sources the tracked `backend/.env.test.example` so env-dependent suites
+  (`TRUST_PROXY`, `ADMIN_FRONTEND_URL`, `RAZORPAY_WEBHOOK_SECRET`) run against
+  the documented test environment instead of Zod defaults.
+
+**Console performance**
+- The admin shell renders from a persisted session immediately and validates it
+  in parallel with page data, roughly halving time-to-first-content.
+- Concurrent identical GET requests are coalesced in `admin/src/services/http.ts`.
+
+**Operations**
+- Durable email outbox and an abandoned-checkout reservation reaper run in-process.
+- `deploy.yml` pins the migration image and auto-rolls back on failure;
+  `db-backup.yml` runs `pg_dump` as an in-VPC one-off task.
+
+---
+
+## 15. Roadmap
 
 ### Backend
-- [ ] Implement Redis caching for product catalog read queries.
+- [ ] Redis caching for product catalogue read queries.
 - [ ] Confirm Razorpay live webhook signature validation end-to-end against the sandbox.
-- [x] Add AWS S3 presigned URL generation for image uploads — `S3Service.generatePresignedUploadUrl` + the `/admin/products/:id/images/presigned-url` route, consumed by `adminService.uploadProductImage`.
+- [x] S3 presigned URL generation for image uploads.
 
-### Customer Storefront
-- [x] Customer authenticated account dashboard — `/login`, `/register`, and `/account` (paginated order history via `GET /orders/my-orders`, profile summary, sign-out), linked from the header account icon.
-- [ ] Add Progressive Web App (PWA) manifest and offline service worker.
+### Storefront
+- [x] Customer account dashboard (`/login`, `/register`, `/account`).
+- [ ] Progressive Web App manifest + offline service worker.
 
-### Admin Portal
-- [ ] Route the product-create image field through the presigned S3 upload (`adminService.uploadProductImage`) instead of browser-downscaled data URLs — the edit flow already supports it once a product id exists.
-- [ ] Add WebSocket live order push notifications.
-- [ ] Add CSV export for GST compliance reporting.
+### Admin
+- [ ] Route the product-create image field through the presigned S3 upload.
+- [ ] Live order push notifications.
+- [ ] CSV export for GST compliance reporting.
 
-### Database Layer
-- [x] Create automated daily database backup pipeline to Amazon S3 — `database/scripts/backup-to-s3.mjs` scheduled by `.github/workflows/db-backup.yml`; see [`database/README.md`](database/README.md#5-automated-backups-to-amazon-s3). Supabase PITR remains a complementary control.
-- [ ] Add PostgreSQL Full-Text Search (`tsvector`) on product names and tags.
+### Database
+- [x] Automated daily backup pipeline to Amazon S3 (`db-backup.yml`).
+- [ ] PostgreSQL full-text search (`tsvector`) on product names and tags.
+
+### Deployment
+- [ ] Reconcile the ECS CloudFormation path with the Vercel/Render target.
+- [ ] `rds.force_ssl` and an SES → SNS webhook subscription in IaC.

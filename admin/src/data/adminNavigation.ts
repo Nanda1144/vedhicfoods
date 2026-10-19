@@ -70,7 +70,7 @@ export const ADMIN_NAV: AdminNavSection[] = [
   {
     title: 'Security',
     items: [
-      { label: 'Change Password', href: '/admin/security', icon: 'lock' },
+      { label: 'Security', href: '/admin/security', icon: 'lock' },
       { label: 'Audit Logs', href: '/admin/audit-logs', icon: 'clock', permission: 'audit_logs.read' },
     ],
   },

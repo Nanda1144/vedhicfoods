@@ -19,6 +19,11 @@ export function AdminSecurityPage() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
+  // Staff sign in with credentials an administrator set and cannot rotate them
+  // themselves — an admin resets the password from Staff management. The API
+  // enforces the same rule, so hiding the form is a UX mirror, not the control.
+  const isStaff = session?.role === 'staff'
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     setError('')
@@ -51,7 +56,10 @@ export function AdminSecurityPage() {
 
   return (
     <>
-      <AdminPageHeader title="Security" description="Change your password and review your session." />
+      <AdminPageHeader
+        title="Security"
+        description={isStaff ? 'Review your session.' : 'Change your password and review your session.'}
+      />
 
       <div className="admin-grid admin-grid--2" style={{ marginBottom: 16 }}>
         <section className="admin-card">
@@ -101,6 +109,16 @@ export function AdminSecurityPage() {
         </section>
       </div>
 
+      {isStaff ? (
+        <section className="admin-card">
+          <header className="admin-card__head">
+            <h2>Password</h2>
+          </header>
+          <p className="admin-muted" style={{ margin: 0 }}>
+            Staff passwords are managed by an administrator. Ask an admin to reset yours if you need a new one.
+          </p>
+        </section>
+      ) : (
       <section className="admin-card">
         <header className="admin-card__head">
           <h2>Change password</h2>
@@ -140,6 +158,7 @@ export function AdminSecurityPage() {
           </div>
         </form>
       </section>
+      )}
     </>
   )
 }

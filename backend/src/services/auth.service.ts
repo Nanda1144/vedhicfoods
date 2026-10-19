@@ -881,7 +881,7 @@ private static async allPermissionSlugs(): Promise<string[]> {
   ): Promise<void> {
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, fullName: true, passwordHash: true, isActive: true, isDeleted: true },
+      select: { id: true, email: true, fullName: true, passwordHash: true, role: true, isActive: true, isDeleted: true },
     })
 
     if (!user || user.isDeleted) {
@@ -890,6 +890,26 @@ private static async allPermissionSlugs(): Promise<string[]> {
 
     if (!user.isActive) {
       throw new UnauthorizedError('This account has been deactivated. Please contact support.')
+    }
+
+    // Staff credentials are provisioned and reset by an administrator; staff
+    // accounts have no self-service password change. Enforced here (not only in
+    // the console UI) so a direct API call cannot bypass it. Owners and admins
+    // keep the ability to rotate their own password.
+    if (user.role === RoleName.STAFF) {
+      await AuditService.record({
+        actorId: userId,
+        actorEmail: user.email,
+        action: 'PASSWORD_CHANGE_BLOCKED',
+        entity: 'User',
+        entityId: userId,
+        metadata: { reason: 'staff accounts are administrator-managed' },
+        req,
+      })
+
+      throw new ForbiddenError(
+        'Staff passwords are managed by an administrator. Ask an admin to reset yours.'
+      )
     }
 
     // Uniform failure for unknown-account and wrong-password: the caller already

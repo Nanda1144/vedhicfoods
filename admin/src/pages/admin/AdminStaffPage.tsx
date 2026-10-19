@@ -153,7 +153,7 @@ export function AdminStaffPage() {
   if (staff.loading && !staff.data) {
     return (
       <>
-        <AdminPageHeader title="Staff management" description="Invite teammates and control who can sign in." />
+        <AdminPageHeader title="Staff management" description="Create staff accounts and control who can sign in." />
         <section className="admin-card">
           {Array.from({ length: 6 }).map((_, index) => (
             <Skeleton key={index} style={{ width: '100%', height: 44, marginBottom: 8 }} />
@@ -166,7 +166,7 @@ export function AdminStaffPage() {
   if (staff.error) {
     return (
       <>
-        <AdminPageHeader title="Staff management" description="Invite teammates and control who can sign in." />
+        <AdminPageHeader title="Staff management" description="Create staff accounts and control who can sign in." />
         <p className="admin-note admin-note--error">{staff.error.message}</p>
       </>
     )
@@ -176,11 +176,11 @@ export function AdminStaffPage() {
     <>
       <AdminPageHeader
         title="Staff management"
-        description={`${staff.data!.filter((member) => member.status === 'active').length} active · ${staff.data!.filter((member) => member.status === 'invited').length} invited · ${staff.data!.filter((member) => member.status === 'suspended').length} suspended`}
+        description={`${staff.data!.filter((member) => member.status === 'active').length} active · ${staff.data!.filter((member) => member.status === 'suspended').length} suspended`}
         actions={
           canWrite && (
             <Button icon="plus" onClick={() => setInviteOpen(true)}>
-              Invite staff
+              Add staff
             </Button>
           )
         }
@@ -200,7 +200,7 @@ export function AdminStaffPage() {
           {
             label: 'Status',
             value: statusFilter,
-            options: ['active', 'invited', 'suspended'],
+            options: ['active', 'suspended'],
             onChange: setStatusFilter,
           },
         ]}
@@ -223,9 +223,9 @@ export function AdminStaffPage() {
       <section className="admin-alert is-info" style={{ marginTop: 4 }}>
         <Icon name="shield" size={16} />
         <span>
-          Staff passwords are hashed server-side and are never returned by the API. There is no email
-          invitation yet — set a temporary password when you create the account and ask the new staff member to
-          change it from <strong>Security</strong> after their first sign-in.
+          No invitation email is sent. Create the account, set the login password, and share the
+          credentials with the staff member yourself — they sign in with them. Staff cannot change their
+          own password; an administrator resets it from this page.
         </span>
       </section>
 
@@ -296,7 +296,7 @@ export function AdminStaffPage() {
  * Default permission set for a role, taken from the role rows returned by the
  * API (`GET /admin/roles`) instead of a hardcoded map. The previous map keyed
  * defaults on invented roles (`manager`, `viewer`, `inventory`, `support`) that
- * do not exist in the RoleName enum, and the invite form defaulted to `manager`
+ * do not exist in the RoleName enum, and the create form defaulted to `manager`
  * — so submitting an invite without touching the role select sent an invalid
  * enum and the API rejected it.
  */
@@ -348,7 +348,7 @@ function InviteModal({
       push({
         title: 'Check the form',
         description:
-          'Enter a full name, a valid work email, and a temporary password of at least 8 characters containing a letter and a number.',
+          'Enter a full name, a valid work email, and a login password of at least 8 characters containing a letter and a number.',
         tone: 'danger',
       })
       return
@@ -366,7 +366,7 @@ function InviteModal({
         phone: form.phone.trim(),
         password: form.password,
         role: form.role,
-        status: 'invited' as const,
+        status: 'active' as const,
         employeeId: `EMP-${String(302 + Math.floor(Math.random() * 900))}`,
         permissions: privileged ? undefined : effectivePermissions,
         photo: form.photo,
@@ -374,10 +374,10 @@ function InviteModal({
         createdAt: new Date().toISOString(),
       }
       await adminService.createStaff(payload)
-      push({ title: 'Invitation sent', description: `${form.name} can now join as ${form.role}.` })
+      push({ title: 'Staff account created', description: `${form.name} can now sign in as ${form.role}.` })
       onSaved()
     } catch (caught) {
-      push({ title: 'Could not invite', description: caught instanceof Error ? caught.message : 'Please try again.', tone: 'danger' })
+      push({ title: 'Could not create account', description: caught instanceof Error ? caught.message : 'Please try again.', tone: 'danger' })
     } finally {
       setSaving(false)
     }
@@ -387,7 +387,7 @@ function InviteModal({
     <Modal
       open
       onClose={onClose}
-      title="Invite a new staff member"
+      title="Add a new staff member"
       size="md"
       footer={
         <>
@@ -395,7 +395,7 @@ function InviteModal({
             Cancel
           </Button>
           <Button icon="check" type="submit" form="invite-form" loading={saving}>
-            Send invitation
+            Create account
           </Button>
         </>
       }
@@ -411,7 +411,7 @@ function InviteModal({
            <Field label="Phone">
              <Input type="tel" value={form.phone} onChange={(event) => setForm((c) => ({ ...c, phone: event.target.value }))} placeholder="+91 …" />
            </Field>
-           <Field label="Temporary password" required hint="At least 8 characters, with one letter and one number.">
+           <Field label="Login password" required hint="Set the password the staff member signs in with (at least 8 characters, one letter and one number).">
              <Input type="password" value={form.password} onChange={(event) => setForm((c) => ({ ...c, password: event.target.value }))} required minLength={8} />
            </Field>
           <Field label="Role" required hint="The role's default permissions are preselected. Adjust below.">
@@ -477,7 +477,7 @@ function StaffEditModal({
 }) {
   const { push } = useToast()
   const [role, setRole] = useState<RoleName>(member.role)
-  const [status, setStatus] = useState<StaffMember['status']>(member.status)
+  const [status, setStatus] = useState<StaffMember['status']>(member.status === 'suspended' ? 'suspended' : 'active')
   const [permissions, setPermissions] = useState<Permission[]>(
     member.permissions ?? roleDefaults(roles, member.role),
   )
@@ -555,7 +555,6 @@ function StaffEditModal({
               aria-label="Status"
               options={[
                 { value: 'active', label: 'Active' },
-                { value: 'invited', label: 'Invited (no access yet)' },
                 { value: 'suspended', label: 'Suspended' },
               ]}
             />

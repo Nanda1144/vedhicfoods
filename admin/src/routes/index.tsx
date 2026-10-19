@@ -88,7 +88,7 @@ const adminChildren: RouteObject[] = [
   { path: 'support', element: guarded(AdminSupportPage, 'Customer Support · Vedhic Admin', 'support.read') },
   { path: 'support/:id', element: guarded(AdminTicketDetailPage, 'Ticket · Vedhic Admin', 'support.read') },
   { path: 'staff', element: guarded(AdminStaffPage, 'Staff Management · Vedhic Admin', 'staff.read') },
-  { path: 'staff/new', element: guarded(AdminStaffPage, 'Invite Staff · Vedhic Admin', 'staff.update') },
+  { path: 'staff/new', element: guarded(AdminStaffPage, 'Add Staff · Vedhic Admin', 'staff.update') },
   { path: 'staff/:id', element: guarded(AdminStaffPage, 'Edit Staff · Vedhic Admin', 'staff.update') },
   { path: 'permissions', element: guarded(AdminPermissionsPage, 'Permissions · Vedhic Admin', 'staff.read') },
   { path: 'audit-logs', element: guarded(AdminAuditLogsPage, 'Audit Logs · Vedhic Admin', 'audit_logs.read') },

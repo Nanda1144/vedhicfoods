@@ -28,6 +28,12 @@ router.use(authenticateOrderAccess)
 // invoices unless the caller holds OWNER/ADMIN.
 router.get('/', InvoiceController.listInvoices)
 router.get('/order/:orderId', InvoiceController.getInvoiceByOrderId)
+// Declared before `/:id` so the literal path is not captured as an invoice id.
+router.get(
+  '/daily-pdf',
+  requirePermission('invoices.read'),
+  InvoiceController.downloadDailyInvoicesPdf
+)
 router.get('/:id', InvoiceController.getInvoice)
 router.get('/:id/download', InvoiceController.getInvoiceDownloadUrl)
 router.get('/:id/pdf', InvoiceController.downloadInvoicePdf)

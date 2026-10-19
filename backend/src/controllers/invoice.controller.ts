@@ -365,4 +365,33 @@ export class InvoiceController {
       next(error)
     }
   }
+
+  /**
+   * GET /api/invoices/daily-pdf?date=YYYY-MM-DD
+   * Streams every invoice issued on a business day as one PDF (one invoice per
+   * page). Used by the admin console to print a delivery run.
+   */
+  public static async downloadDailyInvoicesPdf(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!canViewAllInvoices(req.user)) {
+        throw new AppError('Admin access required', HTTP_STATUS.FORBIDDEN, ERROR_CODES.FORBIDDEN)
+      }
+
+      const rawDate = req.query.date
+      const date =
+        typeof rawDate === 'string' && rawDate.trim()
+          ? rawDate.trim()
+          : InvoiceService.todayBusinessDate()
+
+      const { buffer, filename, count } = await InvoiceService.getDailyInvoicesPdf(date)
+
+      res.setHeader('Content-Type', 'application/pdf')
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+      res.setHeader('X-Invoice-Count', String(count))
+      res.setHeader('Cache-Control', 'no-store')
+      res.send(buffer)
+    } catch (error) {
+      next(error)
+    }
+  }
 }

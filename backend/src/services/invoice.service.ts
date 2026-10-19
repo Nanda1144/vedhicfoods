@@ -76,6 +76,8 @@ export interface InvoiceWithRelations {
 export class InvoiceService {
   private static readonly INVOICE_NUMBER_PREFIX = 'INV'
   private static readonly S3_KEY_PREFIX = 'invoices'
+  /** India Standard Time; the business operates on a single, fixed offset. */
+  private static readonly BUSINESS_UTC_OFFSET_MINUTES = 330
 
   /**
    * Generates the next sequential invoice number.
@@ -527,6 +529,96 @@ export class InvoiceService {
     const buffer = await InvoiceGenerator.generateA4Pdf(invoiceData)
 
     return { buffer, filename: `${invoice.invoiceNumber}.pdf` }
+  }
+
+  /**
+   * Builds one combined PDF containing every invoice issued on a business day.
+   *
+   * The day is interpreted in IST (the business operates in India) rather than
+   * UTC, so an invoice issued at 01:00 IST belongs to that local date instead of
+   * the previous UTC one. Cancelled invoices are excluded because the document
+   * is used for delivery runs.
+   */
+  public static async getDailyInvoicesPdf(
+    date: string
+  ): Promise<{ buffer: Buffer; filename: string; count: number }> {
+    const { start, end } = this.resolveBusinessDay(date)
+
+    const invoices = await prisma.invoice.findMany({
+      where: {
+        invoiceDate: { gte: start, lte: end },
+        status: { not: InvoiceStatus.CANCELLED },
+      },
+      include: {
+        order: {
+          include: {
+            items: true,
+          },
+        },
+      },
+      orderBy: { invoiceDate: 'asc' },
+    })
+
+    if (invoices.length === 0) {
+      throw new AppError(
+        'No invoices were issued on that date',
+        HTTP_STATUS.NOT_FOUND,
+        ERROR_CODES.NOT_FOUND
+      )
+    }
+
+    const documents = invoices.map((invoice) =>
+      this.buildInvoiceData(invoice.order, invoice.invoiceNumber)
+    )
+    const buffer = await InvoiceGenerator.generateBulkA4Pdf(documents, `Invoices ${date}`)
+
+    logger.info(
+      { date, invoiceCount: invoices.length },
+      'Generated combined daily invoice PDF'
+    )
+
+    return { buffer, filename: `invoices-${date}.pdf`, count: invoices.length }
+  }
+
+  /** Today's calendar date (YYYY-MM-DD) in the business timezone. */
+  public static todayBusinessDate(): string {
+    const shifted = new Date(Date.now() + this.BUSINESS_UTC_OFFSET_MINUTES * 60_000)
+    return shifted.toISOString().slice(0, 10)
+  }
+
+  /** Resolves a YYYY-MM-DD business day into its UTC instant range. */
+  private static resolveBusinessDay(date: string): { start: Date; end: Date } {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date)
+    if (!match) {
+      throw new AppError(
+        'Date must be in YYYY-MM-DD format',
+        HTTP_STATUS.BAD_REQUEST,
+        ERROR_CODES.BAD_REQUEST
+      )
+    }
+
+    const year = Number(match[1])
+    const month = Number(match[2])
+    const day = Number(match[3])
+    const probe = new Date(Date.UTC(year, month - 1, day))
+    if (
+      probe.getUTCFullYear() !== year ||
+      probe.getUTCMonth() !== month - 1 ||
+      probe.getUTCDate() !== day
+    ) {
+      throw new AppError(
+        'That date does not exist',
+        HTTP_STATUS.BAD_REQUEST,
+        ERROR_CODES.BAD_REQUEST
+      )
+    }
+
+    const startMs =
+      probe.getTime() - this.BUSINESS_UTC_OFFSET_MINUTES * 60_000
+    return {
+      start: new Date(startMs),
+      end: new Date(startMs + 24 * 60 * 60 * 1000 - 1),
+    }
   }
 
   /**

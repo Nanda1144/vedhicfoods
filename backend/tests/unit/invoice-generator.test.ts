@@ -147,6 +147,31 @@ describe('InvoiceGenerator A4 PDF', () => {
     expect(text).toContain('Rs. 994.00')
   })
 
+  it('combines several invoices into one PDF with one invoice per page', async () => {
+    const first = sampleData({ invoiceNumber: 'INV-2026-000201', orderNumber: 'VF-2026-000701' })
+    const second = sampleData({
+      invoiceNumber: 'INV-2026-000202',
+      orderNumber: 'VF-2026-000702',
+      customerName: 'Ravi Kumar',
+      customerEmail: 'ravi.kumar@example.com',
+    })
+
+    const pdf = await InvoiceGenerator.generateBulkA4Pdf([first, second], 'Invoices 2026-10-19')
+    const insp = inspectPdf(pdf)
+
+    expect(insp.pageCount).toBe(2)
+    expect(insp.allText).toContain('INV-2026-000201')
+    expect(insp.allText).toContain('VF-2026-000701')
+    expect(insp.allText).toContain('INV-2026-000202')
+    expect(insp.allText).toContain('ravi.kumar@example.com')
+    expect(insp.allText).toContain('Page 1 of 2')
+    expect(insp.allText).toContain('Page 2 of 2')
+  })
+
+  it('rejects an empty bulk invoice document', async () => {
+    await expect(InvoiceGenerator.generateBulkA4Pdf([])).rejects.toThrow(/at least one invoice/i)
+  })
+
   it('shows the discount row only when a discount was applied', async () => {
     const withDiscount = inspectPdf(await InvoiceGenerator.generateA4Pdf(sampleData({ discount: 100 })))
     expect(withDiscount.allText).toContain('Discount:')

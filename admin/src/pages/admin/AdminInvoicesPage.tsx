@@ -12,6 +12,11 @@ import { Input } from '@/components/common/form'
 
 const PAGE_SIZE = 10
 
+/** Business day in IST, matching the backend's daily-invoice grouping. */
+function todayInBusinessTimezone(): string {
+  return new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10)
+}
+
 export function AdminInvoicesPage() {
   const { push } = useToast()
   const [search, setSearch] = useState('')
@@ -28,6 +33,8 @@ export function AdminInvoicesPage() {
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
   const [detail, setDetail] = useState<Invoice | null>(null)
+  const [deliveryDate, setDeliveryDate] = useState(todayInBusinessTimezone)
+  const [downloadingAll, setDownloadingAll] = useState(false)
 
   const { data, loading, error } = useAsync(() => adminService.invoices(), [])
 
@@ -116,6 +123,24 @@ export function AdminInvoicesPage() {
         description: caught instanceof Error ? caught.message : 'Please try again in a moment.',
         tone: 'danger',
       })
+    }
+  }
+
+  /** One PDF for the whole delivery run: every invoice for the chosen day. */
+  const handleDownloadAll = async () => {
+    setDownloadingAll(true)
+    try {
+      const blob = await invoiceService.fetchDailyPdf(deliveryDate)
+      openPdfBlob(blob, `invoices-${deliveryDate}.pdf`, true)
+      push({ title: 'Download started', description: `All invoices for ${deliveryDate}.` })
+    } catch (caught) {
+      push({
+        title: 'Could not download invoices',
+        description: caught instanceof Error ? caught.message : 'Please try again in a moment.',
+        tone: 'danger',
+      })
+    } finally {
+      setDownloadingAll(false)
     }
   }
 
@@ -273,6 +298,27 @@ export function AdminInvoicesPage() {
           </Button>
         )}
       </AdminToolbar>
+
+      <section className="admin-card" style={{ padding: 16, display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <label className="stack" style={{ gap: 4 }}>
+          <span className="type-caption">Delivery date</span>
+          <Input
+            type="date"
+            aria-label="Delivery date"
+            value={deliveryDate}
+            onChange={(event) => setDeliveryDate(event.target.value)}
+          />
+        </label>
+        <Button
+          icon="download"
+          loading={downloadingAll}
+          disabled={!deliveryDate}
+          onClick={handleDownloadAll}
+        >
+          Download all invoices (PDF)
+        </Button>
+        <span className="type-caption">One combined PDF with one invoice per page, for the delivery run.</span>
+      </section>
 
       <section className="admin-card">
         <DataTable

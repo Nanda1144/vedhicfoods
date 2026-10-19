@@ -589,3 +589,23 @@ describe('Historical immutability & S3 integration', () => {
     expect(url).toContain('INV-2026-000001.pdf')
   })
 })
+
+describe('Daily invoice PDF', () => {
+  it('combines every invoice issued on the business day into one PDF', async () => {
+    const order = await createOrder(customerAId, 'Alice Invoice', customerAEmail)
+    const invoice = await InvoiceService.createInvoiceForOrder(order.id)
+
+    const result = await InvoiceService.getDailyInvoicesPdf(InvoiceService.todayBusinessDate())
+
+    expect(result.buffer.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    expect(result.count).toBeGreaterThanOrEqual(1)
+    expect(result.filename).toMatch(/^invoices-\d{4}-\d{2}-\d{2}\.pdf$/)
+    expect(inspectPdf(result.buffer).allText).toContain(invoice.invoiceNumber)
+  })
+
+  it('rejects an impossible calendar date', async () => {
+    await expect(InvoiceService.getDailyInvoicesPdf('2026-02-31')).rejects.toMatchObject({
+      statusCode: 400,
+    })
+  })
+})

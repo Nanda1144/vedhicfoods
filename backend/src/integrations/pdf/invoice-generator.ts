@@ -93,6 +93,8 @@ const COLORS = {
   totalBg: '#F2EADB',
 } as const
 
+type PdfDocument = InstanceType<typeof PDFDocument>
+
 export class InvoiceGenerator {
   /**
    * Generates a standard A4 print-ready PDF invoice Buffer.
@@ -105,17 +107,45 @@ export class InvoiceGenerator {
    */
   public static async generateA4Pdf(data: InvoiceData): Promise<Buffer> {
     validateInvoiceData(data)
+    return this.renderToBuffer([data], {
+      Title: `Invoice-${data.invoiceNumber}`,
+      Author: 'Vedhic Foods',
+      Subject: `Tax Invoice for Order ${data.orderNumber}`,
+    })
+  }
+
+  /**
+   * Renders several invoices into one PDF, each starting on a fresh page.
+   *
+   * Used by the admin "download all invoices" action so a delivery run can be
+   * printed as a single document. Page numbers are global to the combined PDF.
+   */
+  public static async generateBulkA4Pdf(
+    documents: InvoiceData[],
+    title = 'Daily invoices'
+  ): Promise<Buffer> {
+    if (documents.length === 0) {
+      throw new Error('At least one invoice is required to generate a bulk PDF.')
+    }
+    documents.forEach(validateInvoiceData)
+    return this.renderToBuffer(documents, {
+      Title: title,
+      Author: 'Vedhic Foods',
+      Subject: `${documents.length} tax invoices`,
+    })
+  }
+
+  private static async renderToBuffer(
+    documents: InvoiceData[],
+    info: { Title: string; Author: string; Subject: string }
+  ): Promise<Buffer> {
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({
           size: 'A4',
           margin: MARGIN,
           bufferPages: true,
-          info: {
-            Title: `Invoice-${data.invoiceNumber}`,
-            Author: 'Vedhic Foods',
-            Subject: `Tax Invoice for Order ${data.orderNumber}`,
-          },
+          info,
         })
 
         const buffers: Buffer[] = []
@@ -123,8 +153,22 @@ export class InvoiceGenerator {
         doc.on('end', () => resolve(Buffer.concat(buffers)))
         doc.on('error', (err) => reject(err))
 
-        const { primary, accent, muted, border, headerBg, rowAlt, totalBg } = COLORS
-        const logo = getBrandLogoPng()
+        documents.forEach((data, index) => {
+          if (index > 0) doc.addPage()
+          this.renderInvoice(doc, data)
+        })
+
+        this.stampFooters(doc)
+        doc.end()
+      } catch (err) {
+        reject(err)
+      }
+    })
+  }
+
+  private static renderInvoice(doc: PdfDocument, data: InvoiceData): void {
+    const { primary, accent, muted, border, headerBg, rowAlt, totalBg } = COLORS
+    const logo = getBrandLogoPng()
 
         // PDFKit's built-in fonts are WinAnsi-encoded and have no glyph for the
         // rupee sign (U+20B9): emitting it prints a corrupted byte (observed as
@@ -318,43 +362,38 @@ export class InvoiceGenerator {
           .text('GRAND TOTAL:', summaryX, y)
           .text(money(data.total), valueX - 10, y, { align: 'right', width: 80 })
 
-        // -----------------------------------------------------------------
-        // Footer on every page + page numbers
-        // -----------------------------------------------------------------
-        const range = doc.bufferedPageRange()
-        const totalPages = range.count
+  }
 
-        for (let i = range.start; i < range.start + range.count; i += 1) {
-          doc.switchToPage(i)
-          doc.strokeColor(border).lineWidth(1).moveTo(MARGIN, FOOTER_LINE_Y).lineTo(RIGHT_EDGE, FOOTER_LINE_Y).stroke()
-          doc
-            .fillColor(muted)
-            .fontSize(8)
-            .font('Helvetica')
-            .text(
-              'Thank you for choosing pure, chemical-free traditional foods for your family!',
-              MARGIN,
-              FOOTER_LINE_Y + 10,
-              { align: 'center', width: 515 }
-            )
-            .text(
-              'This is a computer-generated invoice and requires no physical signature.',
-              MARGIN,
-              FOOTER_LINE_Y + 22,
-              { align: 'center', width: 515 }
-            )
-            .text(
-              `For questions contact ${BRANDING.supportEmail} | Page ${i - range.start + 1} of ${totalPages}`,
-              MARGIN,
-              FOOTER_LINE_Y + 34,
-              { align: 'center', width: 515 }
-            )
-        }
+  private static stampFooters(doc: PdfDocument): void {
+    const { muted, border } = COLORS
+    const range = doc.bufferedPageRange()
+    const totalPages = range.count
 
-        doc.end()
-      } catch (err) {
-        reject(err)
-      }
-    })
+    for (let i = range.start; i < range.start + range.count; i += 1) {
+      doc.switchToPage(i)
+      doc.strokeColor(border).lineWidth(1).moveTo(MARGIN, FOOTER_LINE_Y).lineTo(RIGHT_EDGE, FOOTER_LINE_Y).stroke()
+      doc
+        .fillColor(muted)
+        .fontSize(8)
+        .font('Helvetica')
+        .text(
+          'Thank you for choosing pure, chemical-free traditional foods for your family!',
+          MARGIN,
+          FOOTER_LINE_Y + 10,
+          { align: 'center', width: 515 }
+        )
+        .text(
+          'This is a computer-generated invoice and requires no physical signature.',
+          MARGIN,
+          FOOTER_LINE_Y + 22,
+          { align: 'center', width: 515 }
+        )
+        .text(
+          `For questions contact ${BRANDING.supportEmail} | Page ${i - range.start + 1} of ${totalPages}`,
+          MARGIN,
+          FOOTER_LINE_Y + 34,
+          { align: 'center', width: 515 }
+        )
+    }
   }
 }

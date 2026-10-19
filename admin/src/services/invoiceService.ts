@@ -77,6 +77,15 @@ export const invoiceService = {
     return apiFetchBlob(`/invoices/${encodeURIComponent(id)}/pdf`, { method: 'GET' }, options)
   },
 
+  /** One combined PDF for every invoice issued on `date` (YYYY-MM-DD). */
+  async fetchDailyPdf(date: string, options?: RequestOptions): Promise<Blob> {
+    return apiFetchBlob(
+      `/invoices/daily-pdf?date=${encodeURIComponent(date)}`,
+      { method: 'GET' },
+      options,
+    )
+  },
+
   /** Printable view for the browser. */
   print(): void {
     if (typeof window !== 'undefined') window.print()

@@ -1,5 +1,5 @@
 import type { Invoice } from '@/types'
-import { apiFetch, type RequestOptions } from './http'
+import { apiFetch, apiFetchBlob, type RequestOptions } from './http'
 
 export const invoiceService = {
   async list(options?: RequestOptions): Promise<Invoice[]> {
@@ -59,6 +59,17 @@ export const invoiceService = {
       undefined,
       options,
     )
+  },
+
+  /**
+   * Streams the invoice PDF through the API as a blob.
+   *
+   * Preferred over `downloadUrl`: it does not depend on object storage, so
+   * viewing/downloading an invoice never lands on a raw S3 error page when the
+   * bucket is missing (the development default).
+   */
+  async fetchPdf(id: string, options?: RequestOptions): Promise<Blob> {
+    return apiFetchBlob(`/invoices/${encodeURIComponent(id)}/pdf`, { method: 'GET' }, options)
   },
 
   /** Printable view for the browser. */

@@ -1,7 +1,6 @@
 import { InvoiceData, InvoiceGenerator } from '../integrations/pdf/invoice-generator'
-import { emailTransport } from '../integrations/email/email-transport'
 import { logger } from '../config/logger'
-import { EmailService } from './email.service'
+import { EmailQueue, EmailService } from './email.service'
 
 /**
  * Invoice email dispatch.
@@ -9,8 +8,14 @@ import { EmailService } from './email.service'
  * Extracted from the Brevo integration so the transport is chosen by
  * `EMAIL_PROVIDER` like every other email: previously these two methods called
  * Brevo directly, so switching production to SES silently dropped the invoice
- * (the SES provider also discarded attachments). Both paths now go through
- * `emailTransport.sendAttachmentEmail`, which uses SES `SendRawEmail` on AWS.
+ * (the SES provider also discarded attachments). Both now go through
+ * `EmailQueue`, whose attachment path uses SES `SendRawEmail` on AWS.
+ *
+ * Going through the queue - rather than calling the transport directly - gives
+ * invoice mail the same retry, backoff and bounce/complaint suppression as every
+ * other transactional email, and the `dedupeKey` collapses the two code paths
+ * that can fire for one order (checkout, then payment confirmation) into a single
+ * send.
  */
 export class InvoiceEmailService {
   private static customerHtml(data: InvoiceData): string {
@@ -23,6 +28,7 @@ export class InvoiceEmailService {
         <div style="padding: 24px;">
           <h2 style="color: #2C2214; margin-top: 0;">Namaste ${data.customerName},</h2>
           <p>Your order <strong>${data.orderNumber}</strong> has been successfully confirmed!</p>
+          <p>Invoice No: <strong>${data.invoiceNumber}</strong></p>
           <p>We are handcrafting and packaging your organic foods with natural ingredients and pure cold-pressed A2 ghee.</p>
 
           <div style="background-color: #F8F5F0; padding: 16px; border-radius: 6px; margin: 20px 0;">
@@ -75,18 +81,27 @@ export class InvoiceEmailService {
   public static async sendOrderConfirmedInvoiceEmail(data: InvoiceData): Promise<boolean> {
     try {
       const pdfBuffer = await InvoiceGenerator.generateA4Pdf(data)
-      return await emailTransport.sendAttachmentEmail({
-        toEmail: data.customerEmail,
+      EmailQueue.enqueue({
+        to: data.customerEmail,
         toName: data.customerName,
         subject: `Order Confirmed: ${data.orderNumber} - Vedhic Foods Tax Invoice`,
-        htmlContent: InvoiceEmailService.customerHtml(data),
+        htmlBody: InvoiceEmailService.customerHtml(data),
+        templateName: 'invoice_customer',
+        variables: {
+          customerEmail: data.customerEmail,
+          customerName: data.customerName,
+          orderNumber: data.orderNumber,
+          invoiceNumber: data.invoiceNumber,
+        },
+        dedupeKey: `invoice:customer:${data.invoiceNumber || data.orderNumber}`,
         attachment: {
           name: `Invoice-${data.orderNumber}.pdf`,
           content: pdfBuffer.toString('base64'),
         },
       })
+      return true
     } catch (error: any) {
-      logger.error({ error: error?.message, orderNumber: data.orderNumber }, 'Failed to send customer invoice email')
+      logger.error({ error: error?.message, orderNumber: data.orderNumber }, 'Failed to queue customer invoice email')
       return false
     }
   }
@@ -96,15 +111,29 @@ export class InvoiceEmailService {
    * so the order is never re-rendered.
    */
   public static async sendAdminInvoiceEmail(data: InvoiceData, pdfBuffer: Buffer): Promise<boolean> {
-    return emailTransport.sendAttachmentEmail({
-      toEmail: EmailService.adminRecipient(),
-      toName: 'Vedhic Foods Admin',
-      subject: `[Admin Copy] Paid Order ${data.orderNumber} — Invoice ${data.invoiceNumber}`,
-      htmlContent: InvoiceEmailService.adminHtml(data),
-      attachment: {
-        name: `Invoice-${data.orderNumber}.pdf`,
-        content: pdfBuffer.toString('base64'),
-      },
-    })
+    try {
+      EmailQueue.enqueue({
+        to: EmailService.adminRecipient(),
+        toName: 'Vedhic Foods Admin',
+        subject: `[Admin Copy] Paid Order ${data.orderNumber} — Invoice ${data.invoiceNumber}`,
+        htmlBody: InvoiceEmailService.adminHtml(data),
+        templateName: 'invoice_admin',
+        variables: {
+          customerEmail: data.customerEmail,
+          customerName: data.customerName,
+          orderNumber: data.orderNumber,
+          invoiceNumber: data.invoiceNumber,
+        },
+        dedupeKey: `invoice:admin:${data.invoiceNumber || data.orderNumber}`,
+        attachment: {
+          name: `Invoice-${data.orderNumber}.pdf`,
+          content: pdfBuffer.toString('base64'),
+        },
+      })
+      return true
+    } catch (error: any) {
+      logger.error({ error: error?.message, orderNumber: data.orderNumber }, 'Failed to queue admin invoice email')
+      return false
+    }
   }
 }

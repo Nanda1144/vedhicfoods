@@ -1,4 +1,5 @@
 import { Request, Response } from 'express'
+import { SettingCategory } from '@prisma/client'
 import { prisma } from '../config/database'
 import { encrypt32, decrypt32, maskSecret } from 'vedhicfoods-database'
 import { logger } from '../config/logger'
@@ -164,6 +165,27 @@ export class PaymentSettingsController {
           testMode: typeof testMode === 'boolean' ? testMode : true,
           codEnabled: typeof codEnabled === 'boolean' ? codEnabled : true,
           codLimit: typeof codLimit === 'number' ? codLimit : 5000,
+          updatedBy: actorId,
+        },
+      })
+
+      // Mirror the admin COD toggle into the public, unauthenticated settings
+      // registry so the storefront's `GET /settings` can hide the COD option
+      // until an operator enables it. Without this the two states could diverge
+      // and COD would be offered but rejected at checkout (or vice versa).
+      await prisma.systemSetting.upsert({
+        where: { key: 'shipping_cod_enabled' },
+        update: {
+          value: String(updated.codEnabled),
+          isPublic: true,
+          updatedBy: actorId,
+        },
+        create: {
+          key: 'shipping_cod_enabled',
+          value: String(updated.codEnabled),
+          category: SettingCategory.SHIPPING,
+          description: 'Whether Cash on Delivery is offered at storefront checkout',
+          isPublic: true,
           updatedBy: actorId,
         },
       })

@@ -26,7 +26,12 @@ export function Field({ label, htmlFor, error, hint, required, children, classNa
       </label>
       {children}
       {(error || hint) && (
-        <div className={cn('field__help', error && 'field__help--error')} id={describedBy}>
+        <div
+          className={cn('field__help', error && 'field__help--error')}
+          id={describedBy}
+          aria-live={error ? 'polite' : undefined}
+          aria-atomic={error ? 'true' : undefined}
+        >
           {error ?? hint}
         </div>
       )}

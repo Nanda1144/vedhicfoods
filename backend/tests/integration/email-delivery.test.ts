@@ -55,6 +55,18 @@ describe('Transactional email delivery — all notification types', () => {
     return { orderId: order!.id, orderNumber: order!.orderNumber, order: order! }
   }
 
+  /**
+   * Waits for the in-process email queue to finish draining. Payment and
+   * invoice mail goes through `EmailQueue` (async, setImmediate), so the
+   * transport capture is not populated until the queue has processed.
+   */
+  async function waitForEmailQueue(timeoutMs = 5000): Promise<void> {
+    const deadline = Date.now() + timeoutMs
+    while ((EmailQueue.queueSize() > 0 || EmailQueue.stats().isProcessing) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+
   /** Promotes a COD order to a paid Razorpay one with a CAPTURED payment row. */
   async function createPaidOrder() {
     const { orderId, orderNumber, order } = await createOrder()
@@ -297,6 +309,7 @@ describe('Transactional email delivery — all notification types', () => {
     await InvoiceEmailService.sendOrderConfirmedInvoiceEmail(invoiceData)
     const pdfBuffer = await (await import('../../src/integrations/pdf/invoice-generator')).InvoiceGenerator.generateA4Pdf(invoiceData)
     await InvoiceEmailService.sendAdminInvoiceEmail(invoiceData, pdfBuffer)
+    await waitForEmailQueue()
 
     expect(cap!.attachments).toHaveLength(2)
     const customerAttachment = cap!.attachments.find((a) => a.toEmail === customerEmail)

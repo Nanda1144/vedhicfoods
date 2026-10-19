@@ -21,6 +21,30 @@ export function SearchOverlay({ open, onClose }: SearchOverlayProps) {
   const [results, setResults] = useState<Product[]>([])
   const [loading, setLoading] = useState(false)
   const debouncedQuery = useDebounce(query, 220)
+  const searchTerm = debouncedQuery.trim()
+
+  // Clear state when the overlay closes (render-time adjustment).
+  const [wasOpen, setWasOpen] = useState(open)
+  if (wasOpen !== open) {
+    setWasOpen(open)
+    if (!open) {
+      setQuery('')
+      setResults([])
+      setLoading(false)
+    }
+  }
+
+  // Reflect a new search term during render instead of in an effect.
+  const [activeTerm, setActiveTerm] = useState(searchTerm)
+  if (activeTerm !== searchTerm) {
+    setActiveTerm(searchTerm)
+    if (searchTerm) {
+      setLoading(true)
+    } else {
+      setResults([])
+      setLoading(false)
+    }
+  }
 
   useLockBodyScroll(open)
   useEscapeKey(onClose, open)
@@ -33,30 +57,25 @@ export function SearchOverlay({ open, onClose }: SearchOverlayProps) {
   }, [open])
 
   useEffect(() => {
-    if (!open) {
-      setQuery('')
-      setResults([])
-      return
-    }
-    if (!debouncedQuery.trim()) {
-      setResults([])
-      setLoading(false)
-      return
-    }
-    let cancelled = false
-    setLoading(true)
+    if (!open || !searchTerm) return
+    const controller = new AbortController()
     productService
-      .search(debouncedQuery, 6)
+      .search(searchTerm, 6, { signal: controller.signal })
       .then((items) => {
-        if (!cancelled) setResults(items)
+        if (!controller.signal.aborted) setResults(items)
+      })
+      .catch(() => {
+        // A failed search must not surface as an unhandled rejection; show the
+        // empty state so the customer can keep browsing.
+        if (!controller.signal.aborted) setResults([])
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (!controller.signal.aborted) setLoading(false)
       })
     return () => {
-      cancelled = true
+      controller.abort()
     }
-  }, [debouncedQuery, open])
+  }, [searchTerm, open])
 
   const go = (path: string) => {
     onClose()

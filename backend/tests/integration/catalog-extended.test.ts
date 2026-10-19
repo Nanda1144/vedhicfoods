@@ -5,6 +5,7 @@ import { createApp } from '../../src/app'
 import { AuthService } from '../../src/services/auth.service'
 import { prisma } from '../../src/config/database'
 import { S3Service } from '../../src/integrations/aws/s3/s3.service'
+import { ensureDemoCustomer, DEMO_CUSTOMER_EMAIL, DEMO_CUSTOMER_PASSWORD } from './helpers/demo-user'
 
 const app = createApp()
 
@@ -54,7 +55,8 @@ describe('Catalog Extended Coverage (Product, Category, Images, Security)', () =
   beforeAll(async () => {
     const admin = await AuthService.login({ email: 'admin@vedhicfoods.com', password: 'Admin@Vedhic2026' })
     adminToken = admin.accessToken
-    const customer = await AuthService.login({ email: 'customer@vedhicfoods.com', password: 'Customer@Vedhic2026' })
+    await ensureDemoCustomer()
+    const customer = await AuthService.login({ email: DEMO_CUSTOMER_EMAIL, password: DEMO_CUSTOMER_PASSWORD })
     customerToken = customer.accessToken
     const staff = await AuthService.login({ email: 'staff@vedhicfoods.com', password: 'Staff@Vedhic2026' })
     staffToken = staff.accessToken
@@ -553,6 +555,16 @@ describe('Catalog Extended Coverage (Product, Category, Images, Security)', () =
         .set(auth(adminToken))
         .send({ images: [{ imageId: '00000000-0000-0000-0000-000000000000', displayOrder: 1 }] })
       expect(foreign.status).toBe(400)
+    })
+
+    it('the database permits at most one primary image per product', async () => {
+      await prisma.productImage.updateMany({ where: { productId }, data: { isPrimary: false } })
+      await prisma.productImage.create({
+        data: { productId, imageUrl: 'https://media.example/primary-a.png', isPrimary: true, displayOrder: 0 },
+      })
+      await expect(prisma.productImage.create({
+        data: { productId, imageUrl: 'https://media.example/primary-b.png', isPrimary: true, displayOrder: 1 },
+      })).rejects.toMatchObject({ code: 'P2002' })
     })
 
     it('replaces an image by deleting the old one after attaching the new one', async () => {

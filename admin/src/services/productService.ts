@@ -1,5 +1,4 @@
 import { PRICE_BOUNDS } from '@/data/products'
-import { CATEGORY_BY_SLUG } from '@/data/categories'
 import type { Product, Category } from '@/types'
 import { apiFetch, type RequestOptions } from './http'
 
@@ -35,9 +34,5 @@ export const productService = {
   /** Static facet presets for the filter UI (not product data). */
   priceBounds() {
     return PRICE_BOUNDS
-  },
-
-  category(slug: string) {
-    return CATEGORY_BY_SLUG[slug]
   },
 }

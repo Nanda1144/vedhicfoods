@@ -231,6 +231,8 @@ async function createUserWithRole(opts: {
 }
 
 const createdUserIds: string[] = []
+const createdOrderIds: string[] = []
+const createdAddressIds: string[] = []
 
 describe('VEDHIC FOODS — Role-Based Access Control', () => {
   beforeAll(async () => {
@@ -284,35 +286,56 @@ describe('VEDHIC FOODS — Role-Based Access Control', () => {
     // -----------------------------------------------------------------------
     // CROSS-TENANT FIXTURES — real rows belonging to someone else.
     // -----------------------------------------------------------------------
-    const someOrder = await prisma.order.findFirst({
-      where: { userId: { notIn: [ids.customerA, ids.customerB] } },
-      select: { id: true, orderNumber: true },
+    const foreignOwner = await prisma.user.create({
+      data: {
+        email: `rbac.foreign.${suffix}@vedhicfoods.test`,
+        fullName: 'RBAC Foreign Owner',
+        passwordHash: await AuthService.hashPassword(PASSWORD),
+        role: RoleName.CUSTOMER,
+      },
     })
-    if (!someOrder) throw new Error('No pre-existing order available for IDOR fixtures')
-    foreign.orderId = someOrder.id
-    foreign.orderNumber = someOrder.orderNumber
+    createdUserIds.push(foreignOwner.id)
+    const foreignAddress = await prisma.address.create({
+      data: {
+        userId: foreignOwner.id,
+        fullName: 'RBAC Foreign Owner',
+        phone: '9812345678',
+        line1: '42 Isolation Test Road',
+        city: 'Hyderabad',
+        state: 'Telangana',
+        pincode: '500001',
+        country: 'India',
+      },
+    })
+    createdAddressIds.push(foreignAddress.id)
+    foreign.addressId = foreignAddress.id
 
-    const someAddress = await prisma.address.findFirst({
-      where: { userId: { notIn: [ids.customerA, ids.customerB] } },
-      select: { id: true },
-    })
-    if (!someAddress) throw new Error('No pre-existing address available for IDOR fixtures')
-    foreign.addressId = someAddress.id
+    const createFixtureOrder = async (userId: string, email: string, label: string, addressId?: string) => {
+      const order = await prisma.order.create({
+        data: {
+          orderNumber: `RBAC-${label}-${suffix}`,
+          userId,
+          addressId,
+          customerName: `RBAC ${label}`,
+          customerEmail: email,
+          phone: '9812345678',
+          subtotal: 100,
+          total: 100,
+        },
+      })
+      createdOrderIds.push(order.id)
+      return order
+    }
+    const foreignOrder = await createFixtureOrder(foreignOwner.id, foreignOwner.email, 'FOREIGN', foreignAddress.id)
+    foreign.orderId = foreignOrder.id
+    foreign.orderNumber = foreignOrder.orderNumber
 
-    // Invoices: the suite creates its own so `invoice.userId` is unambiguous.
-    // Orders that already carry an invoice are skipped — `Invoice.orderId` is
-    // unique, so reusing one would fail on a second run after a crash.
-    const invoiceOrders = await prisma.order.findMany({
-      where: { invoice: null },
-      select: { id: true },
-      take: 2,
-      orderBy: { createdAt: 'desc' },
-    })
-    if (invoiceOrders.length < 2) throw new Error('No invoice-free orders available for fixtures')
+    const invoiceOrderA = await createFixtureOrder(ids.customerA, `rbac.customer.a.${suffix}@vedhicfoods.test`, 'INVA')
+    const invoiceOrderB = await createFixtureOrder(ids.customerB, `rbac.customer.b.${suffix}@vedhicfoods.test`, 'INVB')
     const invA = await prisma.invoice.create({
       data: {
         invoiceNumber: `RBAC-INV-A-${suffix}`,
-        orderId: invoiceOrders[0].id,
+        orderId: invoiceOrderA.id,
         userId: ids.customerA,
         subtotal: 100,
         total: 100,
@@ -321,7 +344,7 @@ describe('VEDHIC FOODS — Role-Based Access Control', () => {
     const invB = await prisma.invoice.create({
       data: {
         invoiceNumber: `RBAC-INV-B-${suffix}`,
-        orderId: invoiceOrders[1].id,
+        orderId: invoiceOrderB.id,
         userId: ids.customerB,
         subtotal: 200,
         total: 200,
@@ -363,6 +386,10 @@ describe('VEDHIC FOODS — Role-Based Access Control', () => {
 
     await prisma.supportTicket.deleteMany({ where: { id: { in: [foreign.ticketOfA, foreign.ticketOfB] } } })
     await prisma.invoice.deleteMany({ where: { id: { in: [foreign.invoiceOfA, foreign.invoiceOfB] } } })
+    await prisma.payment.deleteMany({ where: { orderId: { in: createdOrderIds } } })
+    await prisma.orderItem.deleteMany({ where: { orderId: { in: createdOrderIds } } })
+    await prisma.order.deleteMany({ where: { id: { in: createdOrderIds } } })
+    await prisma.address.deleteMany({ where: { id: { in: createdAddressIds } } })
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } })
   }, 60000)
 
@@ -405,6 +432,7 @@ describe('VEDHIC FOODS — Role-Based Access Control', () => {
               `staff holds ${ep.slug} but the API answered ${res.status}`
             ).not.toBe(401)
             expect(res.status).not.toBe(403)
+            expect(res.status, `authorized staff route returned ${res.status}`).toBeLessThan(500)
           } else {
             expect(
               res.status,
@@ -422,6 +450,7 @@ describe('VEDHIC FOODS — Role-Based Access Control', () => {
           const res = await call('admin', ep)
           expect(res.status, `admin blocked with ${res.status}`).not.toBe(401)
           expect(res.status).not.toBe(403)
+          expect(res.status, `authorized admin route returned ${res.status}`).toBeLessThan(500)
         })
       }
     })
@@ -433,6 +462,7 @@ describe('VEDHIC FOODS — Role-Based Access Control', () => {
           const res = await call('owner', ep)
           expect(res.status, `owner blocked with ${res.status}`).not.toBe(401)
           expect(res.status).not.toBe(403)
+          expect(res.status, `authorized owner route returned ${res.status}`).toBeLessThan(500)
         })
       }
     })

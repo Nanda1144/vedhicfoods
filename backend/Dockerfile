@@ -70,7 +70,27 @@ COPY backend/package.json ./backend/
 COPY database/package.json ./database/
 COPY database/prisma ./database/prisma
 
+# Two things must exist in the SHIPPED image that a plain `--omit=dev` install
+# does not provide:
+#
+#   1. The Prisma CLI. `deploy.yml` runs the migration as an ECS one-off task
+#      that overrides the container command with `prisma migrate deploy`. Prisma
+#      is a devDependency, so without this install the task would fall back to
+#      `npx` downloading the CLI at runtime - which fails on the tasks' locked-down
+#      egress and stalls every deploy.
+#   2. The generated Prisma Client. `@prisma/client`'s postinstall cannot run
+#      `prisma generate` when the CLI is absent, so `node_modules/.prisma/client`
+#      would be missing and the app would crash at boot with
+#      "@prisma/client did not initialize yet".
+#
+# `--no-save --no-package-lock` keeps this out of package.json / the lockfile, so
+# CI's `npm ci` and the workspace manifests stay authoritative. The DATABASE_URL
+# below is a throwaway: `prisma generate` reads it only to validate the datasource
+# block and never opens a connection.
 RUN npm ci --omit=dev \
+  && npm install --no-save --no-package-lock prisma@^6.4.1 \
+  && DATABASE_URL="postgresql://build:build@localhost:5432/build" \
+       npx prisma generate --schema database/prisma/schema.prisma \
   && npm cache clean --force
 
 

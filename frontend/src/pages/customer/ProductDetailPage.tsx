@@ -1,15 +1,16 @@
 import { useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { productService } from '@/services/productService'
 import { contentService } from '@/services/contentService'
 import { useAsync } from '@/hooks'
 import { useCart } from '@/context'
 import { stockStatus, stockLabel, badgesFor } from '@/utils/product'
 import { formatCurrency } from '@/utils/format'
+import { placeholderImage } from '@/utils/placeholder'
 import type { Product } from '@/types'
 import type { Crumb } from '@/components/common'
 import {
-  PageHeader, BackButton, Rating, PriceDisplay, QuantitySelector, Badge, Tabs, ProductGridSkeleton,
+  PageHeader, BackButton, Rating, PriceDisplay, QuantitySelector, Badge, Tabs, ProductGridSkeleton, SeoHead,
   Icon, Button, LoadingState, ErrorState, Breadcrumb, EmptyState,
 } from '@/components/common'
 import { ProductGrid } from '@/components/product'
@@ -20,23 +21,57 @@ export function ProductDetailPage() {
   const { add, close, open } = useCart()
   const [quantity, setQuantity] = useState(1)
   const [activeImage, setActiveImage] = useState(0)
+  const [imgErrorFor, setImgErrorFor] = useState<string | null>(null)
 
   const product = useAsync(() => productService.bySlug(slug), [slug])
-  const related = useAsync(() => productService.related(slug, 4), [slug])
-  const reviews = useAsync(() => contentService.reviewsFor(product.data?.id ?? ''), [product.data?.id])
+  const related = useAsync(
+    () => product.data ? productService.relatedFor(product.data, 4) : Promise.resolve([]),
+    [product.data?.id],
+    { lazy: !product.data },
+  )
+  const productId = product.data?.id
+  // Skip until the product is known — otherwise this fired a reviews request
+  // with an empty id on mount (and again on every product change).
+  const reviews = useAsync(
+    () => contentService.reviewsFor(productId ?? ''),
+    [productId],
+    { lazy: !productId },
+  )
 
   const data = product.data
-  const category = data ? productService.category(data.categorySlug) : undefined
+  const productStructuredData = useMemo(() => data ? ({
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    name: data.name,
+    description: data.description,
+    image: data.images,
+    sku: data.sku,
+    brand: { '@type': 'Brand', name: 'Vedhic Foods' },
+    offers: {
+      '@type': 'Offer',
+      url: `https://vedhicfoods.com/product/${encodeURIComponent(data.slug)}`,
+      priceCurrency: 'INR',
+      price: data.price,
+      availability: data.stock > 0 ? 'https://schema.org/InStock' : 'https://schema.org/OutOfStock',
+    },
+    ...(data.reviewCount > 0 ? {
+      aggregateRating: {
+        '@type': 'AggregateRating',
+        ratingValue: data.rating,
+        reviewCount: data.reviewCount,
+      },
+    } : {}),
+  }) : undefined, [data])
 
   const crumbs = useMemo<Crumb[]>(() => {
     if (!data) return [{ label: 'Home', href: '/' }]
     return [
       { label: 'Home', href: '/' },
       { label: 'Shop', href: '/shop' },
-      ...(category ? [{ label: category.name, href: `/shop?category=${category.slug}` }] : []),
-      ...(data ? [{ label: data.name, current: true }] : []),
+      ...(data.categoryName ? [{ label: data.categoryName, href: `/shop?category=${data.categorySlug}` }] : []),
+      { label: data.name, current: true },
     ]
-  }, [data, category])
+  }, [data])
 
   if (product.loading) {
     return <PageLoader />
@@ -51,6 +86,7 @@ export function ProductDetailPage() {
             <ErrorState
               title={product.error?.message ?? 'This product is not available.'}
               description="It may have been discontinued. The rest of our shelves are still open."
+              onRetry={() => void product.run().catch(() => {})}
             />
           </div>
         </section>
@@ -61,6 +97,11 @@ export function ProductDetailPage() {
   const status = stockStatus(data.stock)
   const badges = badgesFor(data)
   const out = status === 'out'
+  const mainSrc = data.images[activeImage] ?? data.images[0] ?? ''
+  const resolvedMainImage =
+    !mainSrc || imgErrorFor === mainSrc
+      ? placeholderImage({ seed: data.slug, variant: 'generic', width: 900, height: 900, label: 'Image coming soon' })
+      : mainSrc
 
   const handleAdd = () => {
     if (out) return
@@ -177,7 +218,13 @@ export function ProductDetailPage() {
       content: (
         <div className="reviews">
           {reviews.loading ? (
-            <EmptyState title="Loading reviews…" />
+            <LoadingState title="Loading reviews" />
+          ) : reviews.error ? (
+            <ErrorState
+              title="Reviews could not be loaded"
+              description={reviews.error.message}
+              onRetry={() => void reviews.run().catch(() => {})}
+            />
           ) : (reviews.data ?? []).length === 0 ? (
             <EmptyState title="No reviews yet" description="Be the first to review this product after your order arrives." />
           ) : (
@@ -206,6 +253,13 @@ export function ProductDetailPage() {
 
   return (
     <>
+      <SeoHead
+        title={`${data.name} | Vedhic Foods`}
+        description={data.shortDescription || data.description}
+        image={data.images[0]}
+        type="product"
+        structuredData={productStructuredData}
+      />
       <section className="section section--product">
         <div className="container">
           <BackButton className="product-detail__back" />
@@ -223,7 +277,13 @@ export function ProductDetailPage() {
                     ))}
                   </div>
                 )}
-                <img src={data.images[activeImage] ?? data.images[0] ?? ''} alt={data.name} className="product-gallery__image" />
+                <img
+                  src={resolvedMainImage}
+                  alt={data.name}
+                  className="product-gallery__image"
+                  decoding="async"
+                  onError={() => setImgErrorFor(mainSrc)}
+                />
               </div>
               {data.images.length > 1 && (
                 <div className="product-gallery__thumbs" role="tablist" aria-label="Product images">
@@ -237,7 +297,14 @@ export function ProductDetailPage() {
                       className={index === activeImage ? 'is-active' : undefined}
                       onClick={() => setActiveImage(index)}
                     >
-                      <img src={image} alt="" />
+                      <img
+                        src={image}
+                        alt=""
+                        loading="lazy"
+                        onError={(event) => {
+                          event.currentTarget.style.visibility = 'hidden'
+                        }}
+                      />
                     </button>
                   ))}
                 </div>
@@ -245,10 +312,10 @@ export function ProductDetailPage() {
             </div>
 
             <div className="product-info">
-              {category && (
-                <a href={`/shop?category=${category.slug}`} className="product-info__category">
-                  {category.name}
-                </a>
+              {data.categoryName && (
+                <Link to={`/shop?category=${data.categorySlug}`} className="product-info__category">
+                  {data.categoryName}
+                </Link>
               )}
               <h1 className="product-info__name">{data.name}</h1>
               <p className="product-info__unit">{data.unit} · {data.sku}</p>
@@ -264,7 +331,7 @@ export function ProductDetailPage() {
               <p className="product-info__desc">{data.shortDescription}</p>
 
               <div className="product-info__buy">
-                <QuantitySelector value={quantity} max={Math.min(99, data.stock)} onChange={setQuantity} disabled={out} />
+                <QuantitySelector value={quantity} max={Math.min(100, data.stock)} onChange={setQuantity} disabled={out} />
                 <Button size="lg" fullWidth disabled={out} onClick={handleAdd} icon={out ? 'ban' : 'cart'}>
                   {out ? 'Out of stock' : `Add to basket · ${formatCurrency(data.price * quantity)}`}
                 </Button>
@@ -320,11 +387,11 @@ export function ProductDetailPage() {
         </div>
       </section>
 
-      {related.data && related.data.length > 0 && (
+      {(related.loading || (related.data && related.data.length > 0)) && (
         <section className="section section--alt">
           <div className="container">
             <h2 className="section-title">You might also like</h2>
-            {related.loading ? <ProductGridSkeleton count={4} /> : <ProductGrid products={related.data} />}
+            {related.loading ? <ProductGridSkeleton count={4} /> : <ProductGrid products={related.data ?? []} />}
           </div>
         </section>
       )}

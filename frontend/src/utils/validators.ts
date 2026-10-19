@@ -24,7 +24,9 @@ export function isEmail(value: string): ValidationResult {
 
 export function isPhoneIN(value: string): ValidationResult {
   const digits = value.replace(/\D/g, '')
-  if (digits.length < 10) return { valid: false, error: 'Enter a valid 10-digit mobile number.' }
+  if (digits.length < 10 || digits.length > 15) {
+    return { valid: false, error: 'Enter a valid 10-digit mobile number.' }
+  }
   return OK
 }
 

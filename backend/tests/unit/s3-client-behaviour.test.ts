@@ -66,6 +66,15 @@ describe('S3Service.uploadFile (production storage path)', () => {
     ).rejects.toThrow('Failed to upload image to cloud storage.')
   })
 
+  it('fails closed with a generic message when the production upload times out', async () => {
+    env.NODE_ENV = 'production'
+    const timeout = Object.assign(new Error('socket timed out'), { name: 'TimeoutError', code: 'ETIMEDOUT' })
+    vi.spyOn(s3Client, 'send').mockRejectedValue(timeout)
+    await expect(
+      S3Service.uploadFile({ key: VALID_KEY, body: PNG, contentType: 'image/png' })
+    ).rejects.toThrow('Failed to upload image to cloud storage.')
+  })
+
   it('never leaks the provider error text in the production failure', async () => {
     env.NODE_ENV = 'production'
     vi.spyOn(s3Client, 'send').mockRejectedValue(new Error('AccessKeyId AKIAIOSFODNN7EXAMPLE rejected'))
@@ -191,6 +200,13 @@ describe('S3Service.deleteFile and checkObjectExists', () => {
   it('reports a failed production delete without throwing', async () => {
     env.NODE_ENV = 'production'
     vi.spyOn(s3Client, 'send').mockRejectedValue(new Error('AccessDenied'))
+    await expect(S3Service.deleteFile(VALID_KEY)).resolves.toBe(false)
+  })
+
+  it('reports a production S3 request timeout as a failed delete', async () => {
+    env.NODE_ENV = 'production'
+    const timeout = Object.assign(new Error('socket timed out'), { name: 'TimeoutError', code: 'ETIMEDOUT' })
+    vi.spyOn(s3Client, 'send').mockRejectedValue(timeout)
     await expect(S3Service.deleteFile(VALID_KEY)).resolves.toBe(false)
   })
 

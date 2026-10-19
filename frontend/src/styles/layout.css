@@ -179,27 +179,41 @@
   margin-left: auto;
 }
 
-.navbar__search {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: var(--radius-circle);
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--color-text-inverse);
-  cursor: pointer;
-  transition:
-    background-color var(--transition-fast),
-    border-color var(--transition-fast),
-    color var(--transition-fast);
+.navbar__searchbar {
+  flex: 0 1 280px;
+  width: min(280px, 34vw);
+  margin-left: var(--space-6);
 }
 
-.navbar__search:hover {
+.navbar__searchfield {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.55rem 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: var(--text-small);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.navbar__searchfield:hover {
   border-color: var(--color-accent);
-  background: var(--color-accent);
-  color: var(--color-text-on-accent);
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--color-text-inverse);
+}
+
+.navbar__searchfield-placeholder {
+  flex: 1;
+}
+
+.navbar__searchfield-shortcut {
+  font-size: var(--text-caption);
+  opacity: 0.7;
 }
 
 .navbar__account {
@@ -628,7 +642,6 @@
   bottom: 0;
   z-index: var(--z-header);
   display: none;
-  padding-bottom: env(safe-area-inset-bottom);
   border-top: var(--border-subtle);
   background: var(--color-surface);
   box-shadow: var(--shadow-lg);
@@ -661,9 +674,15 @@
   font: inherit;
   font-size: var(--text-caption);
   font-weight: var(--weight-medium);
+  line-height: 1.15;
+  text-align: center;
   text-decoration: none;
   cursor: pointer;
   transition: color var(--transition-fast);
+}
+
+.bottom-nav__label {
+  overflow-wrap: anywhere;
 }
 
 .bottom-nav__item:hover {
@@ -727,20 +746,22 @@
     display: block;
   }
 
-  /* Reuse the bottom nav's Search and Cart instead of duplicating them in
-     the mobile header: the header keeps only hamburger + logo + brand name. */
-  .navbar__actions {
-    display: none;
-  }
-
-  /* Mobile header: logo + brand name on the left, hamburger pinned right. */
+  /* Mobile header: logo on the left; Search, Cart and the menu pinned right.
+     The five primary destinations live in the bottom bar. */
   .navbar__menu-btn {
     order: 3;
-    margin-left: auto;
+    margin-left: 0;
+    flex: none;
   }
 
   .site {
     padding-bottom: calc(66px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 380px) {
+  .bottom-nav__item {
+    font-size: 0.62rem;
   }
 }
 
@@ -941,6 +962,8 @@
   position: relative;
   overflow: hidden;
   background: var(--gradient-hero), var(--color-background-alt);
+  /* Cinematic stage: tall on wide screens, content-driven on mobile. */
+  min-height: min(88vh, 860px);
 }
 
 .hero__back {
@@ -956,118 +979,206 @@
 .hero__inner {
   position: relative;
   z-index: 1;
-  display: grid;
-  grid-template-columns: 1.05fr 0.95fr;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: var(--space-10);
+  justify-content: center;
+  gap: var(--space-6);
+  min-height: inherit;
   padding-block: clamp(3rem, 2rem + 6vw, 6rem);
 }
 
 .hero__copy {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-5);
-  max-width: 56ch;
+  width: 100%;
+  max-width: 100%;
+  text-align: center;
+}
+
+/* Mobile: the hero announcement badge duplicates the announcement bar above. */
+@media (max-width: 767px) {
+  .hero__copy > .badge {
+    display: none;
+  }
 }
 
 .hero__title {
   font-family: var(--font-display);
-  font-size: var(--text-display);
+  font-size: clamp(2.75rem, 5.5vw, 6.5rem);
   font-weight: var(--weight-medium);
-  line-height: var(--leading-tight);
-  letter-spacing: var(--tracking-tight);
-  color: var(--color-text-strong);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  color: var(--color-text-inverse);
+  text-shadow:
+    0 2px 24px rgba(0, 0, 0, 0.45),
+    0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.hero__title-line {
+  display: inline-block;
+}
+
+/* Desktop: keep the full heading on one line so it never breaks mid-animation. */
+@media (min-width: 768px) {
+  .hero__title-line {
+    white-space: nowrap;
+  }
+}
+
+.hero__title-fixed {
+  color: var(--color-text-inverse);
+}
+
+.hero__title-dynamic {
+  display: inline-block;
+  /* Reserves room for the longest word ("Presentation") so words never shift
+     the layout as they type/delete. */
+  min-width: 12ch;
+  text-align: left;
+  color: var(--color-accent);
+}
+
+.hero__caret {
+  display: inline-block;
+  width: 0.06em;
+  height: 0.92em;
+  margin-left: 0.08em;
+  background: currentColor;
+  vertical-align: -0.08em;
+  animation: vf-caret 1s steps(1) infinite;
+}
+
+@keyframes vf-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero__caret {
+    display: none;
+  }
 }
 
 .hero__lead {
-  max-width: 46ch;
-  color: var(--color-text-muted);
+  max-width: 52ch;
+  margin-inline: auto;
+  color: color-mix(in srgb, var(--color-text-inverse) 88%, transparent);
   font-size: var(--text-body-lg);
   line-height: var(--leading-relaxed);
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.4);
 }
 
 .hero__actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: var(--space-3);
+}
+
+/* Glass secondary button so it stays legible over any photograph. */
+.hero__actions .btn--outline {
+  background: color-mix(in srgb, #000 22%, transparent);
+  border-color: color-mix(in srgb, var(--color-text-inverse) 55%, transparent);
+  color: var(--color-text-inverse);
+  backdrop-filter: blur(6px);
+}
+
+.hero__actions .btn--outline:not(:disabled):hover {
+  background: color-mix(in srgb, #000 36%, transparent);
+  border-color: var(--color-text-inverse);
+  color: var(--color-text-inverse);
 }
 
 .hero__perks {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   gap: var(--space-2);
 }
 
-.hero__media {
-  position: relative;
+/* Feature badges read against the image without heavy containers. */
+.hero__perks .chip--ghost {
+  border-color: color-mix(in srgb, var(--color-text-inverse) 32%, transparent);
+  background: color-mix(in srgb, #000 26%, transparent);
+  color: var(--color-text-inverse);
+  backdrop-filter: blur(4px);
+}
+
+/* Minimised controls: small, bottom-centre, out of the way of the copy. */
+.hero__controls {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(1rem, 3vh, 2rem);
+  transform: translateX(-50%);
   display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.hero__dots {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hero__dot {
+  display: block;
+  width: 0.5rem;
+  height: 0.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-circle);
+  background: color-mix(in srgb, var(--color-text-inverse) 32%, transparent);
+  cursor: pointer;
+  transition:
+    transform 0.25s var(--ease-in-out),
+    background-color 0.25s var(--ease-in-out);
+}
+
+.hero__dot:hover {
+  background: color-mix(in srgb, var(--color-text-inverse) 55%, transparent);
+}
+
+.hero__dot.is-active {
+  background: var(--color-accent);
+  transform: scale(1.3);
+}
+
+.hero__dot:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
+.hero__playpause {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-}
-
-.hero__plate {
-  position: relative;
-  width: min(460px, 100%);
-  aspect-ratio: 1 / 1;
-  border-radius: var(--radius-2xl);
-  background: var(--gradient-surface);
-  border: var(--border-subtle);
-  box-shadow: var(--shadow-xl);
-  overflow: hidden;
-}
-
-.hero__plate-glow {
-  position: absolute;
-  inset: 12%;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--color-text-inverse) 35%, transparent);
   border-radius: var(--radius-circle);
-  background: radial-gradient(circle at 50% 45%, var(--gold-300), transparent 62%);
-  opacity: 0.7;
+  background: color-mix(in srgb, #000 28%, transparent);
+  color: var(--color-text-inverse);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background-color 0.25s var(--ease-in-out);
 }
 
-.hero__plate-laddu {
-  position: absolute;
-  border-radius: var(--radius-circle);
-  background: radial-gradient(circle at 35% 30%, var(--gold-300), var(--brown-500));
-  box-shadow: var(--shadow-md);
+.hero__playpause:hover {
+  background: color-mix(in srgb, #000 44%, transparent);
 }
 
-.hero__plate-laddu.is-1 {
-  width: 34%;
-  aspect-ratio: 1;
-  top: 18%;
-  left: 22%;
-  animation: vf-float 7s var(--ease-in-out) infinite;
-}
-
-.hero__plate-laddu.is-2 {
-  width: 26%;
-  aspect-ratio: 1;
-  bottom: 20%;
-  left: 40%;
-  background: radial-gradient(circle at 35% 30%, var(--gold-400), var(--olive-600));
-  animation: vf-float 8.5s var(--ease-in-out) infinite;
-}
-
-.hero__plate-laddu.is-3 {
-  width: 20%;
-  aspect-ratio: 1;
-  top: 28%;
-  right: 18%;
-  background: radial-gradient(circle at 35% 30%, var(--gold-300), var(--brown-600));
-  animation: vf-float 6.2s var(--ease-in-out) infinite;
-}
-
-.hero__caption {
-  position: absolute;
-  left: var(--space-5);
-  bottom: var(--space-5);
-  padding: 0.4rem 0.9rem;
-  border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--color-surface-raised) 82%, transparent);
-  font-size: var(--text-caption);
-  font-weight: var(--weight-semibold);
-  letter-spacing: var(--tracking-wide);
-  color: var(--color-text-strong);
+.hero__playpause:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
 }
 
 .hero__grain {
@@ -1076,7 +1187,7 @@
   pointer-events: none;
   background-image: radial-gradient(rgba(74, 50, 32, 0.05) 1px, transparent 1px);
   background-size: 22px 22px;
-  opacity: 0.6;
+  opacity: 0.35;
 }
 
 /* Animated organic background — rolling + zooming, hero only */
@@ -1104,14 +1215,20 @@
   position: absolute;
   inset: 0;
   display: block;
-  background-size: cover;
-  background-position: center;
   opacity: 0;
   transform: scale(1.08);
   transition:
-    opacity 1.4s var(--ease-in-out),
-    transform 9s var(--ease-in-out);
+    opacity 1.2s var(--ease-in-out),
+    transform 6s var(--ease-in-out);
   will-change: opacity, transform;
+}
+
+.hero__bg-image > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
 }
 
 .hero__bg-image.is-active {
@@ -1119,21 +1236,23 @@
   transform: scale(1);
 }
 
-/* Keeps the headline legible over any photograph. */
+/* Subtle dark scrim only where text needs protection — the photograph itself
+   stays at full opacity, colour and sharpness. */
 .hero__bg-scrim {
   position: absolute;
   inset: 0;
   background:
     linear-gradient(
-      100deg,
-      color-mix(in srgb, var(--color-background) 92%, transparent) 0%,
-      color-mix(in srgb, var(--color-background) 74%, transparent) 42%,
-      color-mix(in srgb, var(--color-background) 30%, transparent) 100%
+      180deg,
+      rgba(0, 0, 0, 0.34) 0%,
+      rgba(0, 0, 0, 0.14) 42%,
+      rgba(0, 0, 0, 0.34) 100%
     );
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hero__bg-image {
+  .hero__bg-image,
+  .hero__bg-image.is-active {
     transition: opacity 0.4s linear;
     transform: none;
   }
@@ -1148,8 +1267,8 @@
   aspect-ratio: 1;
   top: -10vmin;
   left: -8vmin;
-  background: radial-gradient(circle at 38% 34%, var(--gold-200) 0%, var(--gold-400) 52%, transparent 72%);
-  opacity: 0.5;
+  background: radial-gradient(circle at 38% 34%, var(--gold-300) 0%, var(--gold-400) 52%, transparent 72%);
+  opacity: 0.12;
   animation: vf-hero-zoom 14s var(--ease-in-out) infinite;
 }
 
@@ -1159,7 +1278,7 @@
   right: -12vmin;
   bottom: -12vmin;
   background: radial-gradient(circle at 42% 38%, var(--olive-300) 0%, var(--olive-600) 50%, transparent 70%);
-  opacity: 0.4;
+  opacity: 0.1;
   animation: vf-hero-zoom 20s var(--ease-in-out) infinite reverse;
 }
 
@@ -1171,7 +1290,7 @@
   border-radius: var(--radius-circle);
   background-image: radial-gradient(var(--brown-300) 1.6px, transparent 1.6px);
   background-size: 22px 22px;
-  opacity: 0.32;
+  opacity: 0.08;
   animation:
     vf-hero-roll 42s linear infinite,
     vf-hero-zoom 13s var(--ease-in-out) infinite alternate;
@@ -1180,7 +1299,7 @@
 .hero__bg-ring {
   border-radius: var(--radius-circle);
   border: 1.5px dashed color-mix(in srgb, var(--color-secondary) 32%, transparent);
-  opacity: 0.5;
+  opacity: 0.14;
 }
 
 .hero__bg-ring--a {
@@ -1200,42 +1319,7 @@
   animation: vf-spin 36s linear infinite reverse;
 }
 
-@media (max-width: 900px) {
-  .hero__inner {
-    grid-template-columns: 1fr;
-  }
-}
-
 @media (max-width: 640px) {
-  .hero__inner {
-    gap: var(--space-6);
-    padding-block: 2rem 3.25rem;
-    justify-items: center;
-  }
-
-  .hero__copy {
-    align-items: center;
-    text-align: center;
-  }
-
-  .hero__actions,
-  .hero__perks {
-    justify-content: center;
-  }
-
-  .hero__media {
-    width: 100%;
-    margin-top: var(--space-2);
-  }
-
-  .hero__plate {
-    width: min(300px, 72vw);
-  }
-
-  .hero__plate-glow {
-    inset: 14%;
-  }
-
   .hero__bg-sphere--gold {
     width: 30vmin;
     top: -6vmin;
@@ -1246,6 +1330,61 @@
     width: 38vmin;
     right: -14vmin;
     bottom: -8vmin;
+  }
+}
+
+/* Mobile: content-driven height, compact type, controls clear the bottom nav. */
+@media (max-width: 767px) {
+  .hero {
+    min-height: auto;
+  }
+
+  .hero__inner {
+    min-height: auto;
+    gap: var(--space-5);
+    padding-block: clamp(2rem, 1.5rem + 6vw, 3.5rem);
+  }
+
+  .hero__title {
+    font-size: clamp(1.6rem, 6vw, 2.6rem);
+  }
+
+  .hero__title-dynamic {
+    min-width: 0;
+  }
+
+  /* Mobile only: highlight the hero copy so it stays legible over photos. */
+  .hero__title,
+  .hero__lead {
+    background: color-mix(in srgb, #000 38%, transparent);
+    padding: 0.2rem 0.55rem;
+    border-radius: var(--radius-sm);
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+
+  .hero__lead {
+    font-size: var(--text-body);
+  }
+
+  /* Mobile only: compact the hero action buttons. */
+  .hero__actions .btn,
+  .hero__actions .btn--lg {
+    padding: 0.55rem 1.1rem;
+    font-size: 0.875rem;
+  }
+
+  /* Slide dots are dropped on mobile; autoplay continues and the play/pause
+     control stays reachable, sitting clear of the fixed bottom navigation. */
+  .hero__controls {
+    position: static;
+    transform: none;
+    margin-top: var(--space-4);
+    margin-bottom: 3.5rem;
+  }
+
+  .hero__dots {
+    display: none;
   }
 }
 
@@ -1269,6 +1408,24 @@
   aspect-ratio: 4 / 3;
   background-size: cover;
   background-position: center;
+}
+
+/* Softens a full-bleed photograph with a hero-style scrim so copy stays calm. */
+.split__media--soft {
+  position: relative;
+}
+
+.split__media--soft::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--color-background) 8%, transparent) 0%,
+      color-mix(in srgb, var(--color-background) 28%, transparent) 100%
+    );
+  pointer-events: none;
 }
 
 .split__copy {
@@ -1455,7 +1612,59 @@
   line-height: var(--leading-relaxed);
 }
 
+/* --- Why Vedhic (text-only, image removed) -------------------------------- */
+
+.why-vedhic {
+  display: flex;
+  justify-content: center;
+}
+
+.why-vedhic__copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+  width: 100%;
+  max-width: 72ch;
+}
+
+.why-vedhic__copy .section-header {
+  width: 100%;
+}
+
+.why-vedhic__cta {
+  display: flex;
+  justify-content: center;
+}
+
+/* Two columns on wide screens so the copy fills the freed space, one on mobile. */
+.feature-list--grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5) var(--space-6);
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .why-vedhic__copy {
+    gap: var(--space-6);
+    text-align: center;
+  }
+
+  .feature-list--grid {
+    grid-template-columns: 1fr;
+  }
+
+  .feature-list--grid .feature-item {
+    text-align: left;
+  }
+}
+
 /* --- Category grid -------------------------------------------------------- */
+
+/* Sits directly beneath the hero, so it needs less vertical air than a section. */
+#categories {
+  padding-block: clamp(2rem, 1.25rem + 2.5vw, 3rem);
+}
 
 .category-grid {
   display: grid;

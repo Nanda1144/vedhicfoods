@@ -43,12 +43,13 @@ export function Breadcrumb({
           return (
             <Fragment key={`${item.label}-${index}`}>
               <li className="breadcrumb__item">
-                {isLast ? (
-                  <span className="breadcrumb__current" aria-current="page">
+                {isLast || !item.href ? (
+                  <span className={cn('breadcrumb__current', !isLast && 'breadcrumb__current--ancestor')} aria-current={isLast ? 'page' : undefined}>
+                    {item.icon && !isLast && <Icon name={item.icon} size={14} />}
                     {item.label}
                   </span>
                 ) : (
-                  <Link className="breadcrumb__link" to={item.href ?? '#'}>
+                  <Link className="breadcrumb__link" to={item.href}>
                     {item.icon && <Icon name={item.icon} size={14} />}
                     {item.label}
                   </Link>

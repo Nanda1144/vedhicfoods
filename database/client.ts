@@ -68,11 +68,25 @@ function withPoolParams(url: string | undefined): string | undefined {
   const connectTimeout = readPositiveInt('DATABASE_CONNECT_TIMEOUT_S') ?? DEFAULT_CONNECT_TIMEOUT_S
   const socketTimeout = readPositiveInt('DATABASE_SOCKET_TIMEOUT_S') ?? DEFAULT_SOCKET_TIMEOUT_S
 
-  // PgBouncer in transaction mode does not support prepared statements, so
-  // Prisma must be told; leaving this off against a pooler causes random
-  // "prepared statement already exists" failures at exactly the wrong moment.
+  // PgBouncer in TRANSACTION mode does not support prepared statements, so
+  // Prisma must be told; leaving this off against a transaction pooler causes
+  // random "prepared statement already exists" failures at exactly the wrong
+  // moment. The SESSION-mode pooler (port 5432) pins a server connection for the
+  // life of the client session and therefore DOES support prepared statements,
+  // so the flag is both unnecessary and harmful there.
+  //
+  // PERFORMANCE: `pgbouncer=true` is not free. Prisma routes each statement
+  // through extra `BEGIN` / `DEALLOCATE ALL` round trips to sidestep server-side
+  // prepared statements. On a high-latency link (this project's Supabase pooler
+  // lives in ap-northeast-1, ~150-200ms RTT) that overhead pushed every trivial
+  // query from ~0.15s to ~1s — enough to make an admin page that fans out a
+  // dozen queries take 12-15 seconds to render. Auto-enable only for the
+  // transaction-mode pooler (port 6543); an operator can still force either
+  // behaviour explicitly with DATABASE_PGBOUNCER=true|false.
+  const isTransactionPooler = /pooler\./i.test(safeHost(url)) && safePort(url) === '6543'
   const usePgbouncer =
-    process.env.DATABASE_PGBOUNCER === 'true' || /pooler\./i.test(safeHost(url))
+    process.env.DATABASE_PGBOUNCER === 'true' ||
+    (process.env.DATABASE_PGBOUNCER !== 'false' && isTransactionPooler)
 
   let parsed: URL
   try {
@@ -100,6 +114,16 @@ function withPoolParams(url: string | undefined): string | undefined {
 function safeHost(url: string): string {
   try {
     return new URL(url).hostname
+  } catch {
+    return ''
+  }
+}
+
+function safePort(url: string): string {
+  try {
+    // An explicit ":5432" is present in DATABASE_URL; default to the Postgres
+    // port when the URL omits it so the check is not defeated by a bare host.
+    return new URL(url).port || '5432'
   } catch {
     return ''
   }

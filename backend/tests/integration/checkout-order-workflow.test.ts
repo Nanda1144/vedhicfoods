@@ -4,9 +4,8 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import request from 'supertest'
 import { createApp } from '../../src/app'
 import { prisma } from '../../src/config/database'
-import { env } from '../../src/config/env'
 import { AuthService } from '../../src/services/auth.service'
-import { razorpayClient } from '../../src/integrations/razorpay/razorpay.client'
+import { resolveRazorpayCredentials } from '../../src/integrations/razorpay/razorpay.client'
 import { OrderStatus, PaymentStatus, PaymentMethod } from '@prisma/client'
 
 const app = createApp()
@@ -427,10 +426,15 @@ describe('Production Checkout & Order Creation Workflow Integration Tests', () =
         data: { razorpayOrderId: rzpOrderId },
       })
 
-      // The gateway cross-check cannot reach Razorpay from a test environment,
-      // so stub payments.fetch to report a settled payment for this order.
+      // The effective gateway credentials are resolved from the admin-configured
+      // payment settings when present and only fall back to the environment. Sign
+      // with the same secret the handler will use, and stub the gateway call on
+      // that exact client instance rather than the environment singleton. The
+      // cross-check cannot reach Razorpay from a test environment, so the stub
+      // reports a settled payment for this order.
+      const session = await resolveRazorpayCredentials()
       const gatewaySpy = vi
-        .spyOn(razorpayClient.payments, 'fetch')
+        .spyOn(session.client.payments, 'fetch')
         .mockImplementation(async (paymentId: string) =>
           ({
             id: paymentId,
@@ -444,7 +448,7 @@ describe('Production Checkout & Order Creation Workflow Integration Tests', () =
         )
 
       const signature = crypto
-        .createHmac('sha256', env.RAZORPAY_KEY_SECRET)
+        .createHmac('sha256', session.keySecret)
         .update(`${rzpOrderId}|${rzpPaymentId}`)
         .digest('hex')
 

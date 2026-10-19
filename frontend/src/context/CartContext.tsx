@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -14,30 +12,9 @@ import { storage } from '@/utils/storage'
 import { cartService, type ServerCart, type ServerCartItem } from '@/services/cartService'
 import { couponService } from '@/services/couponService'
 import type { AppliedCoupon, CartItem, CartTotals, CouponValidation, Product } from '@/types'
-import { useToast } from './ToastContext'
-import { useAuth } from './AuthContext'
-
-interface CartContextValue {
-  items: CartItem[]
-  totals: CartTotals
-  count: number
-  isOpen: boolean
-  coupon: AppliedCoupon | null
-  /** True once the initial server cart fetch has settled. */
-  hydrated: boolean
-  /** True while a cart mutation is in flight. */
-  syncing: boolean
-  open: () => void
-  close: () => void
-  add: (product: Product, quantity?: number, silent?: boolean) => Promise<void>
-  updateQuantity: (id: string, quantity: number) => Promise<void>
-  remove: (id: string) => Promise<void>
-  clear: () => Promise<void>
-  applyCoupon: (code: string) => Promise<CouponValidation>
-  removeCoupon: () => void
-}
-
-const CartContext = createContext<CartContextValue | null>(null)
+import { useToast } from './useToast'
+import { useAuth } from './useAuth'
+import { CartContext } from './useCart'
 
 function toCartItem(item: ServerCartItem): CartItem {
   return {
@@ -51,6 +28,10 @@ function toCartItem(item: ServerCartItem): CartItem {
     unit: item.unit,
     quantity: item.quantity,
     stock: item.inventory.availableQuantity,
+    isOutOfStock: item.inventory.isOutOfStock,
+    hasInsufficientStock: item.inventory.hasInsufficientStock,
+    availableQuantity: item.inventory.availableQuantity,
+    priceChanged: item.priceChanged,
   }
 }
 
@@ -91,11 +72,46 @@ export function CartProvider({ children }: { children: ReactNode }) {
     [serverCart, coupon, items],
   )
   const count = serverCart ? serverCart.totalUnits : totals.itemCount
+  const hasStockIssues = serverCart?.hasStockIssues ?? false
 
   useEffect(() => {
     if (coupon) storage.set(STORAGE_KEYS.coupon, coupon)
     else storage.remove(STORAGE_KEYS.coupon)
   }, [coupon])
+
+  // Re-validate a persisted coupon against the live server cart. The amount is
+  // server-authoritative but is also mirrored to localStorage and subtracted
+  // client-side, so a tampered or stale value would otherwise drive the
+  // displayed payable total. Replace it with the server quote / drop it.
+  useEffect(() => {
+    if (!serverCart || !coupon) return
+    const lines = serverCart.items.map((item) => ({
+      productId: item.productId,
+      quantity: item.quantity,
+    }))
+    if (lines.length === 0) return
+
+    let cancelled = false
+    const persistedAmount = coupon.amount
+    void couponService
+      .validate(coupon.code, lines)
+      .then((result) => {
+        if (cancelled) return
+        if (!result.valid) {
+          setCoupon(null)
+          return
+        }
+        if (result.coupon && result.coupon.amount !== persistedAmount) {
+          setCoupon(result.coupon)
+        }
+      })
+      .catch(() => {
+        /* keep the persisted coupon; the next cart change retries */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [serverCart, coupon])
 
   const applyServer = useCallback((cart: ServerCart) => {
     setServerCart(cart)
@@ -117,7 +133,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       setSyncing(true)
       try {
         applyServer(await mutate())
-      } catch (caught) {
+      } catch {
         onError?.()
         // Re-fetch so optimistic updates never outlive the failed request.
         await reconcile()
@@ -161,12 +177,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
         (existing ?? current)
           .map((item) =>
             item.id === id
-              ? { ...item, quantity: Math.max(0, Math.min(quantity, item.stock, 99)) }
+              ? { ...item, quantity: Math.max(0, Math.min(quantity, item.stock, 100)) }
               : item,
           )
           .filter((item) => item.quantity > 0),
       )
-      await runMutation(() => cartService.update(id, Math.max(0, Math.min(quantity, 99))))
+      await runMutation(() => cartService.update(id, Math.max(0, Math.min(quantity, 100))))
     },
     [runMutation, serverCart],
   )
@@ -247,6 +263,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       coupon,
       hydrated,
       syncing,
+      hasStockIssues,
       open,
       close,
       add,
@@ -264,6 +281,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
       coupon,
       hydrated,
       syncing,
+      hasStockIssues,
       open,
       close,
       add,
@@ -276,10 +294,4 @@ export function CartProvider({ children }: { children: ReactNode }) {
   )
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>
-}
-
-export function useCart(): CartContextValue {
-  const context = useContext(CartContext)
-  if (!context) throw new Error('useCart must be used within a CartProvider')
-  return context
 }

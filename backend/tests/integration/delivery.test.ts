@@ -549,13 +549,19 @@ describe('Delivery Management & Logistics Integration Tests', () => {
       expect(res.body.data.history.length).toBeGreaterThanOrEqual(1)
     })
 
-    it('GET /api/v1/orders/:id/delivery should forbid Customer B from tracking Customer A order with 403', async () => {
+    it('GET /api/v1/orders/:id/delivery should mask Customer A order from Customer B with 404', async () => {
       const res = await request(app)
         .get(`/api/v1/orders/${orderNumberA}/delivery`)
         .set('Authorization', `Bearer ${customerBToken}`)
 
-      expect(res.status).toBe(403)
-      expect(res.body.error).toMatch(/not authorized to view delivery information/i)
+      // Anti-enumeration: a foreign order is indistinguishable from a missing
+      // one, so Customer B cannot confirm Customer A's order exists.
+      expect(res.status).toBe(404)
+      expect(res.body.success).toBe(false)
+      expect(res.body.error).toMatch(/not found/i)
+      // No delivery/tracking payload leaks for a foreign order.
+      expect(res.body.data).toBeUndefined()
+      expect(JSON.stringify(res.body)).not.toMatch(/TRK-|Delhivery/)
     })
 
     it('GET /api/v1/orders/:id/delivery should reject unauthenticated requests with 401', async () => {

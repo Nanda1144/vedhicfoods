@@ -2,10 +2,10 @@ import { useNavigate } from 'react-router-dom'
 import { useCart } from '@/context'
 import { CartLineItem } from '@/components/cart'
 import { CartSummary } from '@/components/cart'
-import { PageHeader, ButtonLink, EmptyState } from '@/components/common'
+import { PageHeader, ButtonLink, EmptyState, LoadingState } from '@/components/common'
 
 export function CartPage() {
-  const { items, totals, updateQuantity, remove, clear } = useCart()
+  const { items, totals, updateQuantity, remove, clear, hasStockIssues, hydrated } = useCart()
   const navigate = useNavigate()
 
   return (
@@ -18,7 +18,9 @@ export function CartPage() {
 
       <section className="section">
         <div className="container">
-          {items.length === 0 ? (
+          {!hydrated ? (
+            <LoadingState title="Loading your basket" description="Fetching your saved cart…" />
+          ) : items.length === 0 ? (
             <div className="cart-empty">
               <EmptyState
                 title="Your basket is empty"
@@ -51,7 +53,18 @@ export function CartPage() {
               </div>
 
               <div className="cart-layout__summary">
-                <CartSummary totals={totals} onCheckout={() => navigate('/checkout')} checkoutLabel="Proceed to checkout" />
+                {hasStockIssues && (
+                  <p className="checkout-stock-warning" role="alert">
+                    Some items are out of stock or have limited availability. Remove or reduce them to
+                    continue to checkout.
+                  </p>
+                )}
+                <CartSummary
+                  totals={totals}
+                  onCheckout={() => navigate('/checkout')}
+                  checkoutLabel="Proceed to checkout"
+                  checkoutDisabled={hasStockIssues}
+                />
               </div>
             </div>
           )}

@@ -127,6 +127,12 @@ export const productService = {
    */
   async related(slug: string, limit = 4, options?: RequestOptions): Promise<Product[]> {
     const current = await apiFetch<Product>(`/products/${encodeURIComponent(slug)}`, undefined, options)
+    return this.relatedFor(current, limit, options)
+  },
+
+  /** Builds the related shelf from a product already loaded by its detail page. */
+  async relatedFor(current: Product, limit = 4, options?: RequestOptions): Promise<Product[]> {
+    const slug = current.slug
     const categorySlug = current?.categorySlug
     if (!categorySlug) return []
 
@@ -165,7 +171,7 @@ export const productService = {
 
   async categories(options?: RequestOptions): Promise<Category[]> {
     const cats = await apiFetch<Category[]>('/categories', undefined, options)
-    if (Array.isArray(cats) && cats.length > 0) return cats
+    if (Array.isArray(cats)) return cats
     throw new Error('Malformed categories response')
   },
 

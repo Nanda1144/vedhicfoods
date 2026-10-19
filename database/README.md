@@ -6,11 +6,12 @@ Comprehensive PostgreSQL database architecture, Prisma schemas, seed scripts, an
 
 ## 1. Architecture Design
 
-The database layer targets **PostgreSQL 15+** and is provider-agnostic: the
-CloudFormation RDS template defaults to `ap-south-1` with Postgres 16.4, while
-local development uses the loopback `postgres:16` from
-`backend/docker-compose.yml`. Nothing in this repo is wired to Supabase or to
-the Tokyo region.
+The database layer targets **PostgreSQL 15+** and is provider-agnostic. The
+managed deployment uses **Supabase PostgreSQL**; the CloudFormation RDS template
+provisions a self-managed `ap-south-1` (Mumbai) alternative with Postgres 16.4,
+and local development uses the loopback `postgres:16` from
+`backend/docker-compose.yml`. Both managed paths are backed up with the standard
+client tools (`pg_dump`); see [Automated backups](#5-automated-backups-to-amazon-s3).
 
 ```mermaid
 erDiagram
@@ -100,12 +101,15 @@ client. The backend consumes it as a dependency instead of keeping its own copy.
 ```
 database/
 ├── prisma/
-│   ├── schema.prisma     # Master Prisma schema (39 models) - the ONLY schema
-│   └── migrations/       # Authoritative migration history (8 migrations)
+│   ├── schema.prisma     # Master Prisma schema (44 models) - the ONLY schema
+│   └── migrations/       # Authoritative migration history (14 migrations)
+├── scripts/
+│   └── backup-to-s3.mjs  # pg_dump -> S3 backup with retention (see section 5)
 ├── client.ts             # PrismaClient singleton (single instance per process)
 ├── encryption.ts         # Shared AES-256-GCM helpers (encrypt32/decrypt32/maskSecret)
 ├── index.ts              # Package entrypoint re-exporting client, crypto and @prisma/client
 ├── seed.ts               # Standalone seeder (roles, permissions, catalogue, settings)
+├── dev-catalog-seed.ts   # Optional local catalogue fixtures
 ├── tsconfig.json         # Builds the package to dist/
 ├── package.json          # Build + Prisma scripts
 └── README.md             # Architecture, schema guide, and execution steps
@@ -199,9 +203,97 @@ Opens Prisma Studio web interface at `http://localhost:5555`.
 
 ---
 
-## 5. TODO & Next Milestones
+## 5. Automated backups to Amazon S3
 
-- [ ] Create automated daily database backup script to Amazon S3.
+`database/scripts/backup-to-s3.mjs` is a dependency-free Node script (standard
+library only) that:
+
+1. runs `pg_dump` against `DATABASE_URL` in PostgreSQL **custom format**
+   (`-Fc`). Custom format is already compressed by `pg_dump`, so no separate
+   gzip pass runs for it; a plain-text dump (`BACKUP_FORMAT=plain`) is piped
+   through gzip unless compression is disabled;
+2. validates the archive with `pg_restore --list` before uploading, so a
+   truncated dump fails here instead of at restore time;
+3. uploads it to `s3://BACKUP_S3_BUCKET/BACKUP_S3_PREFIX/` with the AWS CLI and
+   re-reads the object metadata to confirm the uploaded byte count matches the
+   local file;
+4. deletes backups under the prefix older than `BACKUP_RETENTION_DAYS`.
+
+It fails loudly (non-zero exit, timestamped log line) on any error and never
+places the database password on a command line - `pg_dump` receives it through
+`PGPASSWORD`.
+
+It is scheduled by [`.github/workflows/db-backup.yml`](../.github/workflows/db-backup.yml),
+which runs daily at 19:00 UTC (00:30 IST) and can also be dispatched manually.
+
+### Configuration
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `DATABASE_URL` | yes* | - | PostgreSQL connection string. Use the Supabase **direct** (5432) or session-pooler string, never the transaction pooler (6543). |
+| `BACKUP_DATABASE_URL` | no | - | Overrides `DATABASE_URL` for the backup only. |
+| `BACKUP_S3_BUCKET` | yes | - | Destination bucket. Use a dedicated, versioned, encrypted, non-public bucket - not the media bucket. |
+| `BACKUP_S3_PREFIX` | no | `database-backups/` | Key prefix; a trailing slash is added if missing. |
+| `BACKUP_RETENTION_DAYS` | no | `30` | Delete backups older than this. `0` disables retention. |
+| `BACKUP_FORMAT` | no | `custom` | `custom` (`-Fc`, restorable with `pg_restore`) or `plain`. |
+| `BACKUP_COMPRESS` | no | `true` | Gzip a `plain` dump. Ignored for `custom` (already compressed). |
+| `BACKUP_AWS_REGION` / `AWS_REGION` | no | AWS CLI default | Region for every `aws` call. |
+| `BACKUP_DRY_RUN` | no | `false` | Dump and validate only; skip upload and retention. |
+| `PG_DUMP` / `PG_RESTORE` / `AWS_CLI` | no | `pg_dump` / `pg_restore` / `aws` | Binary path overrides. |
+
+\* Set either `DATABASE_URL` or `BACKUP_DATABASE_URL`; the script exits 1 if
+neither is present.
+
+### GitHub Actions setup
+
+Set these repository **variables** (Settings -> Secrets and variables -> Actions
+-> Variables; none is confidential). No GitHub secret is needed: the database
+credential stays in AWS Secrets Manager and is read at run time.
+
+| Variable | Purpose |
+|---|---|
+| `AWS_REGION` | Region for the OIDC session and every `aws` call. |
+| `AWS_BACKUP_ROLE_ARN` | OIDC role the workflow assumes. Scope it to `s3:PutObject`, `s3:GetObject`, `s3:ListBucket`, `s3:DeleteObject` (and `s3:AbortMultipartUpload`) on the backup bucket/prefix, plus `secretsmanager:GetSecretValue` on the `DATABASE_URL` secret. |
+| `BACKUP_S3_BUCKET` | Destination bucket. |
+| `BACKUP_S3_PREFIX` | Optional key prefix. |
+| `BACKUP_RETENTION_DAYS` | Optional retention (default 30). |
+| `DATABASE_URL_SECRET_ID` | Optional; defaults to `vedhicfoods/backend/DATABASE_URL`, the secret `backend/infra/scripts/create-secrets.ps1` already creates. |
+
+The backup role needs an OIDC trust policy like the deploy role's (see
+`backend/infra/README.md`), scoped to this repository and to the branch the
+schedule runs on (the default branch). As an alternative to script retention you
+can attach an S3 lifecycle rule to expire objects under the prefix; the two are
+independent and either alone is sufficient.
+
+### Restoring a backup
+
+```bash
+# Custom format
+pg_restore --clean --if-exists --no-owner --dbname "$DATABASE_URL" vedhicfoods-YYYYMMDDTHHMMSSZ.dump
+
+# Plain / gzipped format
+gunzip -c vedhicfoods-YYYYMMDDTHHMMSSZ.sql.gz | psql "$DATABASE_URL"
+```
+
+Validate a restore before repointing production at it, exactly as in
+`backend/PRODUCTION_RUNBOOK.md` section 10.1 (`prisma validate`, `prisma status`,
+`prisma migrate diff --exit-code`).
+
+### Supabase notes
+
+`pg_dump` from the standard client tools is Supabase's supported export path; the
+client major version must be >= the server's. Supabase **PITR** is a separate,
+complementary control - it restores the whole instance to a moment and lives with
+the provider, whereas this pipeline produces a logical dump you own and can keep
+off-provider. Run both; do not treat them as substitutes. (On the self-managed
+RDS path, `vedhicfoods-database.yaml` sets a 35-day `BackupRetentionPeriod` for
+the same reason.)
+
+---
+
+## 6. TODO & Next Milestones
+
+- [x] Create automated daily database backup script to Amazon S3 - see section 5.
 - [ ] Add database read-replica routing configuration for high-traffic read operations.
 - [ ] Implement database table partitioning for historical orders.
 - [ ] Add PostgreSQL Full-Text Search (tsvector/tsquery) indexes on product names and descriptions.

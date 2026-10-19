@@ -15,6 +15,8 @@ import { initials } from '@/utils/format'
 
 const PAGE_SIZE = 8
 
+const ROLE_RANK: Record<string, number> = { owner: 3, admin: 2, staff: 1, customer: 0 }
+
 export function AdminStaffPage() {
   const { session, can, refresh } = useAdminAuth()
   const { push } = useToast()
@@ -75,12 +77,14 @@ export function AdminStaffPage() {
           description: `${member.name} can${action === 'suspend' ? ' no longer' : ''} sign in.`,
         })
       }
-      setActOn(null)
-      await staff.run()
-      refresh()
-    } finally {
-      setBusy(false)
-    }
+       setActOn(null)
+       await staff.run()
+       refresh()
+     } catch (caught) {
+       push({ title: 'Could not complete action', description: caught instanceof Error ? caught.message : 'Please try again.', tone: 'danger' })
+     } finally {
+       setBusy(false)
+     }
   }
 
   const columns: Array<Column<StaffMember>> = [
@@ -121,7 +125,7 @@ export function AdminStaffPage() {
       align: 'right',
       render: (member) => (
         <span className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
-          {canWrite && member.id !== selfId && member.role !== 'owner' && (
+          {canWrite && member.id !== selfId && (ROLE_RANK[member.role] ?? 0) < (ROLE_RANK[session?.role ?? 'customer'] ?? 0) && (
             <>
               {member.status === 'suspended' ? (
                 <Button size="sm" variant="ghost" icon="check" onClick={() => setActOn({ member, action: 'activate' })}>
@@ -136,7 +140,7 @@ export function AdminStaffPage() {
             </>
           )}
           {member.id === selfId && <span className="type-caption">you</span>}
-          {canWrite && (
+          {canWrite && ((member.id === selfId) || (ROLE_RANK[member.role] ?? 0) < (ROLE_RANK[session?.role ?? 'customer'] ?? 0)) && (
             <Button size="sm" variant="ghost" icon="edit" onClick={() => setEditing(member)}>
               Edit
             </Button>
@@ -319,6 +323,7 @@ function InviteModal({
     name: '',
     email: '',
     phone: '',
+    password: '',
     role: defaultRole,
     photo: '',
     address: '',
@@ -334,16 +339,36 @@ function InviteModal({
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
+
+    const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())
+    const passwordValid =
+      form.password.length >= 8 && /[A-Za-z]/.test(form.password) && /[0-9]/.test(form.password)
+
+    if (form.name.trim().length < 2 || !emailValid || !passwordValid) {
+      push({
+        title: 'Check the form',
+        description:
+          'Enter a full name, a valid work email, and a temporary password of at least 8 characters containing a letter and a number.',
+        tone: 'danger',
+      })
+      return
+    }
+
     setSaving(true)
     try {
+      // OWNER/ADMIN targets inherit every permission by role, so the API refuses a
+      // per-user grant set for them. Omit permissions in that case.
+      const privileged = form.role === 'owner' || form.role === 'admin'
+      const effectivePermissions = permissions.length > 0 ? [...permissions] : roleDefaults(roles, form.role)
       const payload = {
         name: form.name.trim(),
         email: form.email.trim().toLowerCase(),
         phone: form.phone.trim(),
+        password: form.password,
         role: form.role,
         status: 'invited' as const,
         employeeId: `EMP-${String(302 + Math.floor(Math.random() * 900))}`,
-        permissions: permissions.length > 0 ? [...permissions] : roleDefaults(roles, form.role),
+        permissions: privileged ? undefined : effectivePermissions,
         photo: form.photo,
         address: form.address.trim(),
         createdAt: new Date().toISOString(),
@@ -383,9 +408,12 @@ function InviteModal({
           <Field label="Work email" required>
             <Input type="email" value={form.email} onChange={(event) => setForm((c) => ({ ...c, email: event.target.value }))} required />
           </Field>
-          <Field label="Phone">
-            <Input type="tel" value={form.phone} onChange={(event) => setForm((c) => ({ ...c, phone: event.target.value }))} placeholder="+91 …" />
-          </Field>
+           <Field label="Phone">
+             <Input type="tel" value={form.phone} onChange={(event) => setForm((c) => ({ ...c, phone: event.target.value }))} placeholder="+91 …" />
+           </Field>
+           <Field label="Temporary password" required hint="At least 8 characters, with one letter and one number.">
+             <Input type="password" value={form.password} onChange={(event) => setForm((c) => ({ ...c, password: event.target.value }))} required minLength={8} />
+           </Field>
           <Field label="Role" required hint="The role's default permissions are preselected. Adjust below.">
             <Select
               value={form.role}
@@ -470,10 +498,13 @@ function StaffEditModal({
     event.preventDefault()
     setSaving(true)
     try {
+      // OWNER/ADMIN targets inherit every permission by role; the API refuses a
+      // per-user grant set for them, so only send permissions for STAFF targets.
+      const privileged = role === 'owner' || role === 'admin'
       await adminService.updateStaff(member.id, {
         role,
         status,
-        permissions: permissions.length > 0 ? [...permissions] : undefined,
+        permissions: privileged ? undefined : permissions.length > 0 ? [...permissions] : undefined,
       })
       push({ title: 'Staff updated', description: `${member.name} saved.` })
       onSaved()

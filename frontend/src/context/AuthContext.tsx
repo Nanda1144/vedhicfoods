@@ -1,7 +1,5 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -9,31 +7,8 @@ import {
 } from 'react'
 import { authService, normalizeSessionUser } from '@/services/authService'
 import { AUTH_EXPIRED_EVENT, tokenStore, type SessionUser } from '@/services/tokenStore'
-import { useToast } from './ToastContext'
-
-interface SignInInput {
-  email: string
-  password: string
-}
-
-interface RegisterInput {
-  fullName: string
-  email: string
-  password: string
-  phone?: string
-}
-
-interface AuthContextValue {
-  user: SessionUser | null
-  /** True once the initial `/auth/me` bootstrap has settled. */
-  ready: boolean
-  signIn: (input: SignInInput) => Promise<void>
-  register: (input: RegisterInput) => Promise<void>
-  signOut: () => Promise<void>
-  refresh: () => Promise<void>
-}
-
-const AuthContext = createContext<AuthContextValue | null>(null)
+import { useToast } from './useToast'
+import { AuthContext, type RegisterInput, type SignInInput } from './useAuth'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { push } = useToast()
@@ -51,7 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false
     async function bootstrap() {
       try {
-        const profile = await authService.me()
+        const profile = await authService.restoreSession()
         if (cancelled) return
         const next = normalizeSessionUser(profile)
         tokenStore.setUser(next)
@@ -121,10 +96,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
-
-export function useAuth(): AuthContextValue {
-  const context = useContext(AuthContext)
-  if (!context) throw new Error('useAuth must be used within an AuthProvider')
-  return context
 }

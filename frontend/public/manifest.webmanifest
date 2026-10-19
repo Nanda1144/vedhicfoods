@@ -1,0 +1,22 @@
+{
+  "name": "Vedhic Foods",
+  "short_name": "Vedhic Foods",
+  "description": "Vedhic Foods — premium organic and traditional Indian foods. Handcrafted millet laddus, ragi roti, cold-pressed oils and heritage grains, sourced from trusted farms.",
+  "lang": "en-IN",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#1F3D2B",
+  "background_color": "#faf6ec",
+  "categories": ["food", "shopping", "lifestyle"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

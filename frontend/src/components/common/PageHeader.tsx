@@ -38,10 +38,12 @@ export function PageHeader({
   return (
     <header className={cn('page-header', `page-header--${align}`, className)}>
       <div className="container">
-        <BackButton className="page-header__back" />
         {crumbs && crumbs.length > 0 && <Breadcrumb items={crumbs} className="page-header__crumbs" />}
         {eyebrow && <p className="type-eyebrow page-header__eyebrow">{eyebrow}</p>}
-        <h1 className="page-header__title">{title}</h1>
+        <div className="page-header__title-row">
+          <BackButton className="page-header__back" />
+          <h1 className="page-header__title">{title}</h1>
+        </div>
         {description && <p className="page-header__desc">{description}</p>}
         {meta && <div className="page-header__meta">{meta}</div>}
       </div>

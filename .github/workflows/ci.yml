@@ -171,6 +171,13 @@ jobs:
       DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/vedhicfoods_test?schema=public
       TEST_DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/vedhicfoods_test?schema=public
       NODE_ENV: test
+      # `database/seed.ts` only creates the operator accounts when these are set,
+      # and ~15 integration suites authenticate as the seeded admin/staff
+      # (`admin@vedhicfoods.com` / `Admin@Vedhic2026`). Without them the seed
+      # silently skips both users and every RBAC suite fails with Unauthorized.
+      # These are throwaway CI-only credentials, not production secrets.
+      SEED_ADMIN_PASSWORD: Admin@Vedhic2026
+      SEED_STAFF_PASSWORD: Staff@Vedhic2026
     services:
       postgres:
         image: postgres:16-alpine

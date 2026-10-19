@@ -10,9 +10,6 @@ import type {
 
 /**
  * Brevo adapted to the shared `EmailProvider` contract.
- *
- * Brevo's own `sendEmail` swallows failures and returns false, so it is reused
- * as-is for the best-effort path rather than being rewritten.
  */
 const brevoProvider: EmailProvider = {
   name: 'brevo',

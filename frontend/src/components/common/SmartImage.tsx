@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ImgHTMLAttributes } from 'react'
+import { useCallback, useState, type ImgHTMLAttributes } from 'react'
 import { cn } from '@/utils/cn'
 import { placeholderImage, type AspectRatio } from '@/utils/placeholder'
 
@@ -27,18 +27,21 @@ export function SmartImage({
 }: SmartImageProps) {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [resolvedSrc, setResolvedSrc] = useState(src)
-  const keyRef = useRef(0)
+  const [attempt, setAttempt] = useState(0)
+  const [syncedSrc, setSyncedSrc] = useState(src)
 
-  useEffect(() => {
+  // Reset internal state during render when the source changes (React's
+  // recommended alternative to a setState-in-effect).
+  if (syncedSrc !== src) {
+    setSyncedSrc(src)
     setResolvedSrc(src)
     setStatus('loading')
-    keyRef.current = 0
-  }, [src])
+    setAttempt(0)
+  }
 
   const handleError = useCallback(() => {
-    const attempt = keyRef.current
     if (attempt === 0) {
-      keyRef.current = 1
+      setAttempt(1)
       setResolvedSrc(
         placeholderImage({
           seed,
@@ -51,7 +54,7 @@ export function SmartImage({
     } else if (attempt === 1) {
       setStatus('error')
     }
-  }, [seed])
+  }, [attempt, seed])
 
   const style = ratio ? { aspectRatio: ratio } : { aspectRatio: `var(--ratio-${aspect})` }
 

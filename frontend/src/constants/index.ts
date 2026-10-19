@@ -7,15 +7,7 @@ export const BREAKPOINTS = {
   xxl: 1440,
 } as const
 
-export const PRODUCT_GRID_PAGE_SIZES = [9, 12, 24] as const
 export const PRODUCT_GRID_DEFAULT_PAGE_SIZE = 12 as const
-
-export const RATING_OPTIONS = [
-  { label: 'Any rating', value: '0' },
-  { label: '4.5 ★ & above', value: '4.5' },
-  { label: '4 ★ & above', value: '4' },
-  { label: '3 ★ & above', value: '3' },
-] as const
 
 export const SORT_OPTIONS = [
   { label: 'Featured', value: 'featured' },
@@ -32,6 +24,3 @@ export const TOAST_DURATIONS = {
   normal: 4200,
   long: 7000,
 } as const
-
-/** How many skeleton tiles to show while a grid is loading. */
-export const SKELETON_TILES = 8 as const

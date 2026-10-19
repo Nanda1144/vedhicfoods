@@ -1,21 +1,24 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
+
+const FALLBACK = () => false
 
 export function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (typeof window === 'undefined' || !window.matchMedia) return () => {}
+      const media = window.matchMedia(query)
+      media.addEventListener('change', onChange)
+      return () => media.removeEventListener('change', onChange)
+    },
+    [query],
+  )
+
+  const getSnapshot = useCallback(() => {
     if (typeof window === 'undefined' || !window.matchMedia) return false
     return window.matchMedia(query).matches
-  })
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.matchMedia) return
-    const media = window.matchMedia(query)
-    const handle = (event: MediaQueryListEvent) => setMatches(event.matches)
-    setMatches(media.matches)
-    media.addEventListener('change', handle)
-    return () => media.removeEventListener('change', handle)
   }, [query])
 
-  return matches
+  return useSyncExternalStore(subscribe, getSnapshot, FALLBACK)
 }
 
 export function usePrefersReducedMotion(): boolean {

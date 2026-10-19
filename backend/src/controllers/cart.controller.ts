@@ -18,7 +18,7 @@ export class CartController {
     try {
       const { userId, sessionToken } = CartController.extractIdentity(req)
       const cart = await CartService.getCart(userId, sessionToken)
-      res.status(200).json(cart)
+      res.status(200).json({ success: true, data: cart })
     } catch (error: any) {
       logger.error({ error: error.message }, 'Failed to get cart')
       sendControllerError(res, error, 'Failed to get cart', req.id)

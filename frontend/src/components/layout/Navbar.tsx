@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { cn } from '@/utils/cn'
 import { PRIMARY_NAV } from '@/data/navigation'
-import { useCart, useSettings } from '@/context'
+import { useCart } from '@/context'
 import { useMediaQuery } from '@/hooks'
 import { BREAKPOINTS } from '@/constants'
 import { Icon, Logo, IconButton } from '../common'
@@ -15,7 +15,6 @@ interface NavbarProps {
 
 export function Navbar({ onOpenSearch, onOpenMenu, onOpenCart }: NavbarProps) {
   const { count } = useCart()
-  const { settings } = useSettings()
   const [scrolled, setScrolled] = useState(false)
   const isDesktop = useMediaQuery(`(min-width: ${BREAKPOINTS.lg}px)`)
 
@@ -74,20 +73,18 @@ export function Navbar({ onOpenSearch, onOpenMenu, onOpenCart }: NavbarProps) {
           )}
 
           {isDesktop && (
-            <button type="button" className="navbar__search" onClick={onOpenSearch} aria-label="Search products (Ctrl+K)" title="Search products (Ctrl+K)">
-              <Icon name="search" size={18} />
-            </button>
-          )}
-
-          {isDesktop && (
-            <div className="navbar__account">
-              <span className="navbar__account-btn">
-                <Icon name="user" size={19} />
-                <span className="navbar__account-label">
-                  <span className="navbar__account-title">Guest</span>
-                  <span className="navbar__account-sub">{settings.brandName}</span>
-                </span>
-              </span>
+            <div className="navbar__searchbar" role="search">
+              <button
+                type="button"
+                className="navbar__searchfield"
+                onClick={onOpenSearch}
+                aria-label="Search products (Ctrl+K)"
+                title="Search products (Ctrl+K)"
+              >
+                <Icon name="search" size={18} />
+                <span className="navbar__searchfield-placeholder">Search products...</span>
+                <span className="navbar__searchfield-shortcut">Ctrl K</span>
+              </button>
             </div>
           )}
 

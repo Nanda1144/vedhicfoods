@@ -1,37 +1,13 @@
 import {
-  createContext,
   useCallback,
-  useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from 'react'
-import { useLockBodyScroll } from '@/hooks/useLockBodyScroll'
 import { TOAST_DURATIONS } from '@/constants'
-import type { StatusTone } from '@/types'
-
-export interface ToastDraft {
-  title: string
-  description?: string
-  tone?: StatusTone
-  duration?: number
-}
-
-export interface ToastItem extends Required<Pick<ToastDraft, 'title' | 'tone'>> {
-  id: number
-  description?: string
-  duration: number
-}
-
-interface ToastContextValue {
-  toasts: ToastItem[]
-  push: (draft: ToastDraft) => number
-  dismiss: (id: number) => void
-  clear: () => void
-}
-
-const ToastContext = createContext<ToastContextValue | null>(null)
+import { ToastContext, useToast, type ToastDraft, type ToastItem } from './useToast'
 
 let toastId = 0
 
@@ -82,6 +58,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts([])
   }, [clearTimer])
 
+  // Cancel every pending auto-dismiss timer on unmount so a late `dismiss`
+  // cannot fire a state update after the provider is gone.
+  useEffect(() => {
+    const pending = timers.current
+    return () => {
+      for (const id of Object.keys(pending)) window.clearTimeout(pending[Number(id)])
+      timers.current = {}
+    }
+  }, [])
+
   const value = useMemo(
     () => ({ toasts, push, dismiss, clear }),
     [toasts, push, dismiss, clear],
@@ -90,16 +76,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return <ToastContext.Provider value={value}>{children}</ToastContext.Provider>
 }
 
-export function useToast(): ToastContextValue {
-  const context = useContext(ToastContext)
-  if (!context) throw new Error('useToast must be used within a ToastProvider')
-  return context
-}
-
 /** Grounded below the app chrome so navigation never loses its position. */
 export function ToastViewport() {
   const { toasts, dismiss } = useToast()
-  useLockBodyScroll(false)
 
   return (
     <div className="toast-viewport" role="region" aria-label="Notifications" aria-live="polite">

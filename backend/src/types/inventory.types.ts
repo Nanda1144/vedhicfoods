@@ -33,19 +33,38 @@ export const INVENTORY_AUDIT_ACTIONS = {
 // 3. ZOD VALIDATION SCHEMAS
 // ==========================================
 
+// PostgreSQL stores these columns as 4-byte signed integers. A quantity larger
+// than this fits in the Zod number but overflows on the write, surfacing as an
+// opaque 500 instead of a validation error — so it is bounded here.
+export const MAX_INVENTORY_QUANTITY = 2_147_483_647
+
 export const adjustStockSchema = z.object({
   operation: z.enum(INVENTORY_OPERATIONS, {
     errorMap: () => ({
       message: `Operation must be one of: ${INVENTORY_OPERATIONS.join(', ')}`,
     }),
   }),
-  quantity: z.coerce.number().int().positive('Adjustment quantity must be a positive integer'),
+  quantity: z.coerce
+    .number()
+    .int()
+    .positive('Adjustment quantity must be a positive integer')
+    .max(MAX_INVENTORY_QUANTITY, 'Adjustment quantity exceeds the maximum supported value'),
   reason: z.string().trim().max(500, 'Reason cannot exceed 500 characters').optional(),
-  reorderThreshold: z.coerce.number().int().min(0, 'Reorder threshold cannot be negative').optional(),
+  reorderThreshold: z.coerce
+    .number()
+    .int()
+    .min(0, 'Reorder threshold cannot be negative')
+    .max(MAX_INVENTORY_QUANTITY, 'Reorder threshold exceeds the maximum supported value')
+    .optional(),
 })
 
 export const updateInventorySchema = z.object({
-  reorderThreshold: z.coerce.number().int().min(0, 'Reorder threshold cannot be negative').optional(),
+  reorderThreshold: z.coerce
+    .number()
+    .int()
+    .min(0, 'Reorder threshold cannot be negative')
+    .max(MAX_INVENTORY_QUANTITY, 'Reorder threshold exceeds the maximum supported value')
+    .optional(),
   status: z.nativeEnum(InventoryStatus, {
     errorMap: () => ({
       message: 'Status must be IN_STOCK, LOW_STOCK, OUT_OF_STOCK, or BACKORDER',

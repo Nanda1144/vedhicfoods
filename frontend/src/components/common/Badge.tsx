@@ -1,19 +1,7 @@
 import type { HTMLAttributes } from 'react'
 import { cn } from '@/utils/cn'
-import type { StatusTone } from '@/types'
 
 type BadgeTone = 'primary' | 'secondary' | 'accent' | 'success' | 'warning' | 'danger' | 'neutral' | 'info'
-
-export const TONE_TO_STATUS: Record<BadgeTone, StatusTone> = {
-  primary: 'neutral',
-  secondary: 'accent',
-  accent: 'accent',
-  success: 'success',
-  warning: 'warning',
-  danger: 'danger',
-  neutral: 'neutral',
-  info: 'info',
-}
 
 const TONE_CLASS: Record<BadgeTone, string> = {
   primary: 'badge--primary',

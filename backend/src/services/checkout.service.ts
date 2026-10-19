@@ -269,7 +269,6 @@ export class CheckoutService {
     const total = Math.round((taxableAmount + shipping + tax) * 100) / 100
 
     const orderNumber = CheckoutService.generateOrderNumber()
-    const invoiceId = `INV-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`
     const isCod = input.paymentMethod === PaymentMethod.COD
 
     // 10. Database Transaction Execution
@@ -312,7 +311,13 @@ export class CheckoutService {
           paymentMethod: input.paymentMethod,
           couponCode: validatedCouponResult ? validatedCouponResult.code : null,
           notes: input.notes || null,
-          invoiceId,
+          // `invoiceId` is deliberately left unset here. A real, sequentially
+          // numbered Invoice row is created only after payment capture
+          // (InvoiceService.createInvoiceForOrder). A previous version minted a
+          // phantom `INV-YYYY-<epoch>` string at checkout, which the UI and the
+          // confirmation email then presented as a tax-invoice number even though
+          // no such invoice existed - producing two different "official" invoice
+          // numbers per order and a broken download link.
           shippingAddressSnapshot,
           items: {
             create: orderItemsData,

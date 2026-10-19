@@ -176,6 +176,10 @@ export interface WebsiteSettings {
   heroCtaLabel: string
   /** Hero background images (URLs or data URLs), cross-faded in order. */
   heroImages: string[]
+  /** Whether the homepage "Our Story" milestones section is shown. */
+  storyEnabled: boolean
+  /** Whether Cash on Delivery is offered (admin-controlled; hidden until enabled). */
+  codEnabled: boolean
 }
 
 export interface SocialLink {

@@ -11,11 +11,13 @@ export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElemen
 }
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function Textarea(
-  { label, error, hint, required, srLabel, className, id, ...props },
+  { label, error, hint, required, srLabel, className, id, 'aria-invalid': ariaInvalid, 'aria-describedby': ariaDescribedBy, ...props },
   ref,
 ) {
   const generatedId = useId()
   const inputId = id ?? generatedId
+  const helpId = error || hint ? `${inputId}-help` : undefined
+  const describedBy = [ariaDescribedBy, helpId].filter(Boolean).join(' ') || undefined
 
   const control = (
     <span className={cn('input input--textarea', error && 'is-invalid')}>
@@ -23,7 +25,10 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
         ref={ref}
         id={inputId}
         className={cn('input__control', className)}
-        aria-invalid={Boolean(error)}
+        required={required}
+        aria-required={required || undefined}
+        aria-invalid={ariaInvalid ?? Boolean(error)}
+        aria-describedby={describedBy}
         {...props}
       />
     </span>

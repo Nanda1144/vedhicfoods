@@ -226,7 +226,7 @@ function buildOrderTimeline(raw: any): OrderTimelineEntry[] {
   const currentIndex = flow.findIndex((entry) => entry.status === current)
   return flow.map((entry, index) => ({
     ...entry,
-    completed: index <= currentIndex && current !== 'pending' ? index <= currentIndex : index <= currentIndex,
+    completed: index <= currentIndex,
     at: entry.status === 'pending' ? placedAt : entry.status === current ? updatedAt : undefined,
   }))
 }
@@ -296,6 +296,7 @@ function mapProduct(raw: any): Product {
     slug: raw.slug ?? '',
     name: raw.name,
     categorySlug: raw.categorySlug ?? '',
+    categoryName: raw.categoryName ?? raw.category?.name ?? '',
     shortDescription: raw.shortDescription ?? '',
     description: raw.description ?? '',
     price: num(raw.price),
@@ -332,7 +333,7 @@ function mapCustomer(raw: any): Customer {
     status: raw.isActive === false ? 'blocked' : 'active',
     addresses: [],
     orderCount: num(raw.orderCount),
-    totalSpent: 0,
+    totalSpent: num(raw.totalSpent),
     marketingOptIn: false,
     joinedAt: iso(raw.createdAt) ?? '',
     lastOrderAt: iso(raw.lastOrderAt),
@@ -365,7 +366,7 @@ function mapDiscount(raw: any): Discount {
     type: raw.discountType === 'FIXED_AMOUNT' ? 'flat' : 'percent',
     value: num(raw.discountValue ?? raw.value),
     minOrderValue: num(raw.minOrderValue),
-    maxUses: raw.maxUses ?? raw.maxUses > 0 ? num(raw.maxUses, 1000) : 1000,
+    maxUses: raw.maxUses > 0 ? num(raw.maxUses, 1000) : 1000,
     usedCount: num(raw.usageCount ?? raw.usedCount),
     appliesTo:
       (raw.productIds?.length ?? 0) > 0 ? 'product' : (raw.categoryIds?.length ?? 0) > 0 ? 'category' : 'all',
@@ -564,16 +565,6 @@ function mapInventoryAlert(raw: any): InventoryAlert {
 
 /* ------------------------------------------------------------ Dashboard */
 
-function isoWeek(date: Date): { year: number; week: number } {
-  const copy = new Date(date.getTime())
-  copy.setHours(0, 0, 0, 0)
-  copy.setDate(copy.getDate() + 3 - ((copy.getDay() + 6) % 7))
-  const week1 = new Date(copy.getFullYear(), 0, 4)
-  const weekNumber =
-    1 + Math.round(((copy.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7)
-  return { year: copy.getFullYear(), week: weekNumber }
-}
-
 export interface DashboardData {
   metrics: DashboardMetric[]
   revenueSeries: RevenuePoint[]
@@ -585,15 +576,33 @@ export interface DashboardData {
   lowStockCount: number
 }
 
+/** Maps a human-readable status label onto the console's tone palette. */
+function statusToneForLabel(label: string): StatusTone {
+  const value = label.toLowerCase()
+  if (value.includes('deliver') || value.includes('confirm') || value.includes('pack') || value.includes('ship')) {
+    return 'success'
+  }
+  if (value.includes('cancel') || value.includes('fail')) return 'danger'
+  if (value.includes('pending') || value.includes('process')) return 'warning'
+  return 'neutral'
+}
+
+/**
+ * Maps the dashboard aggregate payload onto the console's typed views.
+ *
+ * Every widget is now computed server-side (`GET /admin/dashboard`) against the
+ * full dataset with an explicit date window. The console no longer fans out to
+ * paginated `fetchAll` calls or reconstructs revenue/top-product metrics from a
+ * truncated slice of recent orders, which is what produced both the wrong
+ * figures and the 60s timeouts.
+ */
 function buildDashboardData(body: any): DashboardData {
   const data = unwrap(body) ?? body
   const overview = data.overview ?? {}
-  const orders: any[] = Array.isArray(data.recentOrders) ? data.recentOrders : []
-  const recentOrders = orders.map(mapOrder)
-  const mappedCustomers: Customer[] = Array.isArray(data.recentCustomers)
+  const recentOrders: Order[] = Array.isArray(data.recentOrders) ? data.recentOrders.map(mapOrder) : []
+  const recentCustomers: Customer[] = Array.isArray(data.recentCustomers)
     ? data.recentCustomers.map(mapCustomer)
     : []
-  const revenue = num(overview.revenue)
 
   const currencyFormatter = new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -605,7 +614,7 @@ function buildDashboardData(body: any): DashboardData {
     {
       id: 'revenue',
       label: 'Revenue',
-      value: currencyFormatter.format(revenue),
+      value: currencyFormatter.format(num(overview.revenue30d)),
       delta: 0,
       trend: 'flat',
       hint: 'Paid orders · last 30 days',
@@ -644,67 +653,58 @@ function buildDashboardData(body: any): DashboardData {
       value: String(num(overview.deliveredOrders)),
       delta: 0,
       trend: 'flat',
-      hint: 'Orders marked out for delivery/delivered',
+      hint: 'Orders marked delivered',
       tone: 'success',
     },
   ]
 
-  const sortedOrders = [...recentOrders].sort((a, b) => (a.placedAt < b.placedAt ? 1 : -1))
-  const recent = sortedOrders.slice(0, 8)
-  const allOrders = [...sortedOrders, ...(Array.isArray(data.orders) ? data.orders.map(mapOrder) : [])]
-  const weekly = new Map<number, { revenue: number; orders: number }>()
-  for (const order of allOrders) {
-    const parsed = new Date(order.placedAt)
-    if (Number.isNaN(parsed.getTime())) continue
-    const { year, week } = isoWeek(parsed)
-    const key = year * 100 + week
-    const bucket = weekly.get(key) ?? { revenue: 0, orders: 0 }
-    bucket.revenue += order.total
-    bucket.orders += 1
-    weekly.set(key, bucket)
-  }
-  const weekKeys = [...weekly.keys()].sort((a, b) => a - b).slice(-10)
-  const revenueSeries: RevenuePoint[] = weekKeys.map((key, index) => {
-    const bucket = weekly.get(key)!
-    return { label: `Wk ${index + 1}`, revenue: Math.round(bucket.revenue), orders: bucket.orders }
-  })
+  const revenueSeries: RevenuePoint[] = Array.isArray(data.revenueSeries)
+    ? data.revenueSeries.map((point: any, index: number) => ({
+        label: str(point.label, `Wk ${index + 1}`),
+        revenue: num(point.revenue),
+        orders: num(point.orders),
+      }))
+    : []
 
-  const unitsSold = new Map<string, { name: string; units: number; revenue: number }>()
-  for (const order of allOrders) {
-    for (const item of order.items) {
-      if (!item.productId) continue
-      const agg = unitsSold.get(item.productId) ?? { name: item.name, units: 0, revenue: 0 }
-      agg.units += item.quantity
-      agg.revenue += item.quantity * item.price
-      unitsSold.set(item.productId, agg)
-    }
-  }
-  const topProducts: TopProduct[] = [...unitsSold.entries()]
-    .map(([productId, agg]) => ({ productId, name: agg.name, image: '', unitsSold: agg.units, revenue: Math.round(agg.revenue) }))
-    .sort((a, b) => b.unitsSold - a.unitsSold)
-    .slice(0, 5)
+  const topProducts: TopProduct[] = Array.isArray(data.topProducts)
+    ? data.topProducts.map((product: any) => ({
+        productId: str(product.productId),
+        name: str(product.name, 'Product'),
+        image: str(product.image),
+        unitsSold: num(product.unitsSold),
+        revenue: num(product.revenue),
+      }))
+    : []
 
-  const totalOrders = num(overview.totalOrders, orders.length)
-  const statuses: Array<{ label: string; value: number; tone: StatusTone }> = [
-    { label: 'Delivered', value: num(overview.deliveredOrders), tone: 'success' },
-    { label: 'Pending', value: num(overview.pendingOrders), tone: 'warning' },
-    { label: 'Cancelled', value: num(overview.cancelledOrders), tone: 'danger' },
-  ]
-  const resolved = statuses.reduce((sum, item) => sum + item.value, 0)
   const orderStatusBreakdown: Array<{ label: string; value: number; tone: StatusTone }> =
-    resolved < totalOrders
-      ? [...statuses, { label: 'Other', value: totalOrders - resolved, tone: 'neutral' }]
-      : statuses
+    Array.isArray(data.orderStatusBreakdown)
+      ? data.orderStatusBreakdown.map((item: any) => ({
+          label: str(item.label),
+          value: num(item.value),
+          tone: statusToneForLabel(str(item.label)),
+        }))
+      : []
+
+  const categoryPerformance: Array<{ name: string; count: number; stock: number; value: number; share: number }> =
+    Array.isArray(data.categoryPerformance)
+      ? data.categoryPerformance.map((entry: any) => ({
+          name: str(entry.name),
+          count: num(entry.count),
+          stock: num(entry.stock),
+          value: num(entry.value),
+          share: num(entry.share),
+        }))
+      : []
 
   return {
     metrics,
     revenueSeries,
     topProducts,
-    recentOrders: recent,
-    recentCustomers: mappedCustomers,
+    recentOrders: [...recentOrders].sort((a, b) => (a.placedAt < b.placedAt ? 1 : -1)).slice(0, 8),
+    recentCustomers: recentCustomers.slice(0, 4),
     orderStatusBreakdown,
-    categoryPerformance: [],
-    lowStockCount: num(overview.lowStock, 0),
+    categoryPerformance,
+    lowStockCount: num(data.lowStockCount, num(overview.lowStock, 0)),
   }
 }
 
@@ -718,25 +718,11 @@ function buildDashboardData(body: any): DashboardData {
 export const adminService = {
   /* ------------------------------------------------------------ Dashboard */
   async dashboard(options?: RequestOptions): Promise<DashboardData> {
+    // Single aggregate call. The backend returns every widget; the console must
+    // not fan out to paginated product/customer/ticket lists here — that chain
+    // was what blew the 60s request budget.
     const body = await apiFetchRaw<any>('/admin/dashboard', undefined, options)
-    const base = buildDashboardData(body)
-    const [products, categoryBody] = await Promise.allSettled([
-      fetchAll<Product>('/admin/products', options),
-      apiFetchRaw<any>('/admin/categories', undefined, options),
-    ])
-    if (products.status === 'fulfilled') {
-      const categories = buildCategories(categoryBody)
-      base.categoryPerformance = buildCategoryPerformance(products.value, categories)
-      base.lowStockCount = products.value.filter((product) => product.stock > 0 && product.stock <= 50).length
-    }
-    try {
-      const customersBody = await apiFetchRaw<any>('/admin/customers?page=1&limit=100&per_page=100', undefined, options)
-      const customerItems = extractItems(customersBody) ?? []
-      base.recentCustomers = customerItems.slice(0, 4).map(mapCustomer)
-    } catch {
-      // Customers view is guarded by `customers.read`; the dashboard renders without it.
-    }
-    return base
+    return buildDashboardData(body)
   },
 
   /** Reports page entry point — the API aliases `/admin/analytics` to the dashboard. */
@@ -757,7 +743,8 @@ export const adminService = {
 
   /* ---------------------------------------------------------------- Reads */
   async customers(options?: RequestOptions): Promise<Customer[]> {
-    return fetchAll<Customer>('/admin/customers', options)
+    const items = await fetchAll<any>('/admin/customers', options)
+    return items.map(mapCustomer)
   },
 
   async customer(id: string, options?: RequestOptions): Promise<Customer | undefined> {
@@ -766,10 +753,10 @@ export const adminService = {
   },
 
   async orders(options?: RequestOptions): Promise<Order[]> {
-    return fetchAll<Order>('/admin/orders', options, (body) => {
-      if (Array.isArray(body?.items)) return body.items
-      return undefined
-    })
+    const items = await fetchAll<any>('/admin/orders', options, (body) =>
+      Array.isArray(body?.items) ? body.items : undefined,
+    )
+    return items.map(mapOrder)
   },
 
   async order(id: string, options?: RequestOptions): Promise<Order | undefined> {
@@ -833,7 +820,8 @@ export const adminService = {
   },
 
   async tickets(options?: RequestOptions): Promise<SupportTicket[]> {
-    return fetchAll<SupportTicket>('/admin/support/tickets', options)
+    const items = await fetchAll<any>('/admin/support/tickets', options)
+    return items.map(mapTicket)
   },
 
   async ticket(id: string, options?: RequestOptions): Promise<SupportTicket | undefined> {
@@ -1092,18 +1080,23 @@ export const adminService = {
 
   /* -------------------------------------------------------------- Staff */
   async createStaff(input: Omit<StaffMember, 'id'> & { id?: string; password?: string }, options?: RequestOptions) {
+    const role = (input.role ?? 'staff').toUpperCase()
+    // OWNER/ADMIN inherit every permission by role; the API refuses a per-user
+    // grant set for them (400), so only attach permissions for STAFF targets.
+    const privileged = role === 'OWNER' || role === 'ADMIN'
+    const permissionSlugs = !privileged && input.permissions?.length ? input.permissions : undefined
     const body = {
       fullName: input.name,
       email: input.email,
       password: input.password,
       phone: input.phone || undefined,
-      role: (input.role ?? 'staff').toUpperCase(),
-      permissionSlugs: input.permissions?.length ? input.permissions : undefined,
+      role,
+      permissionSlugs,
     }
     const created = await apiFetchRaw<any>('/admin/staff', { method: 'POST', body: JSON.stringify(body) }, options)
     const staff = mapStaff(unwrap(created) ?? created)
-    if (input.permissions?.length) {
-      await apiFetchRaw<any>(`/admin/staff/${staff.id}/permissions`, { method: 'PATCH', body: JSON.stringify({ permissionSlugs: input.permissions }) }, options)
+    if (permissionSlugs) {
+      await apiFetchRaw<any>(`/admin/staff/${staff.id}/permissions`, { method: 'PATCH', body: JSON.stringify({ permissionSlugs }) }, options)
     }
     return staff
   },
@@ -1118,7 +1111,10 @@ export const adminService = {
     if (Object.keys(body).length > 0) {
       await apiFetchRaw<any>(`/admin/staff/${id}`, { method: 'PATCH', body: JSON.stringify(body) }, options)
     }
-    if (permissions !== undefined) {
+    // Skip the per-user grant write for OWNER/ADMIN targets: they already inherit
+    // every permission and the API rejects the request with 400.
+    const privileged = role === 'owner' || role === 'admin'
+    if (permissions !== undefined && !privileged) {
       await apiFetchRaw<any>(`/admin/staff/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ permissionSlugs: permissions }) }, options)
     }
     return patch
@@ -1228,34 +1224,3 @@ export const adminService = {
 }
 
 type Permission = import('@/types').Permission
-
-function buildCategories(body: any): Map<string, string> {
-  const map = new Map<string, string>()
-  for (const raw of extractItems(body) ?? []) {
-    if (typeof raw?.slug === 'string' && typeof raw?.name === 'string') {
-      map.set(raw.slug, raw.name)
-    }
-  }
-  return map
-}
-
-function buildCategoryPerformance(products: Product[], categories: Map<string, string>) {
-  const byCategory = new Map<string, { name: string; count: number; stock: number; value: number }>()
-  for (const product of products) {
-    const entry = byCategory.get(product.categorySlug) ?? {
-      name: categories.get(product.categorySlug) ?? product.categorySlug.replaceAll('-', ' '),
-      count: 0,
-      stock: 0,
-      value: 0,
-    }
-    entry.count += 1
-    entry.stock += product.stock
-    entry.value += product.price * product.stock
-    byCategory.set(product.categorySlug, entry)
-  }
-  const maxValue = Math.max(...[...byCategory.values()].map((entry) => entry.value), 1)
-  return [...byCategory.values()]
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 6)
-    .map((entry) => ({ ...entry, share: Math.round((entry.value / maxValue) * 100) }))
-}

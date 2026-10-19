@@ -7,15 +7,11 @@
 
 /** Legacy namespace written by previous builds, mapped to its replacement. */
 const LEGACY_KEY_MAP: Record<string, string> = {
-  'vedhi.cart.v1': 'vedhic.cart.v1',
   'vedhi.theme.v1': 'vedhic.theme.v1',
   'vedhi.settings.v1': 'vedhic.settings.v1',
   'vedhi.coupon.v1': 'vedhic.coupon.v1',
-  'vedhi.orders.v1': 'vedhic.orders.v1',
   'vedhi.admin.session.v1': 'vedhic.admin.session.v1',
   'vedhi.admin.session.temp.v1': 'vedhic.admin.session.temp.v1',
-  'vedhi.admin.data.v1': 'vedhic.admin.data.v1',
-  'vedhi.recent.v1': 'vedhic.recent.v1',
   'vedhi.auth.token': 'vedhic.auth.token',
   'vedhi:downloaded-invoices': 'vedhic:downloaded-invoices',
 }

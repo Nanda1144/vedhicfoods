@@ -3,6 +3,12 @@ import { prisma } from '../config/database'
 import { logger } from '../config/logger'
 import { AuditService } from './audit.service'
 import { BadRequestError, ConflictError, NotFoundError } from '../utils/errors'
+import { withCache, CACHE_TTL_SECONDS } from '../utils/cache'
+import {
+  invalidateCatalogCaches,
+  categoryDetailCacheKey,
+  categoryListCacheKey,
+} from '../utils/catalog-cache'
 import {
   CreateCategoryInput,
   UpdateCategoryInput,
@@ -86,6 +92,19 @@ export class CategoryService {
   public static async listCategories(options: { activeOnly?: boolean; featured?: boolean } = {}): Promise<CategoryHierarchyResponse[]> {
     const { activeOnly = true, featured } = options
 
+    // Only the public, active-only listing is cached. The admin listing
+    // (`activeOnly: false`) includes inactive categories and is never shared.
+    if (!activeOnly) {
+      return this.listCategoriesUncached(options)
+    }
+
+    const key = categoryListCacheKey(true, featured)
+    return withCache(key, CACHE_TTL_SECONDS.categoryList, () => this.listCategoriesUncached(options))
+  }
+
+  private static async listCategoriesUncached(options: { activeOnly?: boolean; featured?: boolean } = {}): Promise<CategoryHierarchyResponse[]> {
+    const { activeOnly = true, featured } = options
+
     const where: any = {}
     if (activeOnly) {
       where.isActive = true
@@ -106,12 +125,12 @@ export class CategoryService {
           orderBy: { sortOrder: 'asc' },
           include: {
             _count: {
-              select: { products: { where: { isDeleted: false, isActive: true } } },
+              select: { products: { where: { isDeleted: false, isActive: true, status: 'PUBLISHED' } } },
             },
           },
         },
         _count: {
-          select: { products: { where: { isDeleted: false, isActive: true } } },
+          select: { products: { where: { isDeleted: false, isActive: true, status: 'PUBLISHED' } } },
         },
       },
     })
@@ -123,6 +142,13 @@ export class CategoryService {
    * Get single category by ID or unique slug.
    */
   public static async getCategoryByIdOrSlug(idOrSlug: string, activeOnly = false): Promise<CategoryHierarchyResponse> {
+    const key = categoryDetailCacheKey(idOrSlug, activeOnly)
+    return withCache(key, CACHE_TTL_SECONDS.categoryDetail, () =>
+      this.getCategoryByIdOrSlugUncached(idOrSlug, activeOnly)
+    )
+  }
+
+  private static async getCategoryByIdOrSlugUncached(idOrSlug: string, activeOnly = false): Promise<CategoryHierarchyResponse> {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug)
 
     const category = await prisma.category.findFirst({
@@ -139,12 +165,12 @@ export class CategoryService {
           orderBy: { sortOrder: 'asc' },
           include: {
             _count: {
-              select: { products: { where: { isDeleted: false, isActive: true } } },
+              select: { products: { where: { isDeleted: false, isActive: true, status: 'PUBLISHED' } } },
             },
           },
         },
         _count: {
-          select: { products: { where: { isDeleted: false, isActive: true } } },
+          select: { products: { where: { isDeleted: false, isActive: true, status: 'PUBLISHED' } } },
         },
       },
     })
@@ -221,6 +247,8 @@ export class CategoryService {
       metadata: { name: created.name, slug: created.slug, parentId: created.parentId },
       req,
     })
+
+    await invalidateCatalogCaches()
 
     logger.info({ categoryId: created.id, name: created.name, slug: created.slug }, 'Category created successfully')
     return this.formatCategory(created)
@@ -312,6 +340,8 @@ export class CategoryService {
       req,
     })
 
+    await invalidateCatalogCaches()
+
     logger.info({ categoryId: updated.id, name: updated.name }, 'Category updated successfully')
     return this.formatCategory(updated)
   }
@@ -369,6 +399,8 @@ export class CategoryService {
       metadata: { name: existing.name, slug: existing.slug },
       req,
     })
+
+    await invalidateCatalogCaches()
 
     logger.info({ categoryId: id, name: existing.name }, 'Category deleted safely')
     return { success: true, message: `Category '${existing.name}' successfully deleted` }

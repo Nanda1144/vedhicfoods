@@ -7,15 +7,18 @@
     "scripts": {
         "dev": "vite --port 5173",
         "typecheck": "tsc -b --pretty false",
+        "test": "vitest run",
         "build": "tsc -b --pretty false && vite build",
+        "postbuild": "node scripts/generate-sitemap.mjs",
         "lint": "oxlint",
-        "preview": "vite preview --port 5173"
+        "preview": "vite preview --port 5173",
+        "images": "node scripts/optimize-images.mjs",
+        "sitemap": "node scripts/generate-sitemap.mjs"
     },
     "dependencies": {
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
-        "react-router-dom": "^7.18.4",
-        "vedhicfoods-platform": "file:.."
+        "react-router-dom": "^7.18.4"
     },
     "devDependencies": {
         "@types/node": "^24.13.3",
@@ -23,6 +26,7 @@
         "@types/react-dom": "^19.2.7",
         "@vitejs/plugin-react": "^6.1.1",
         "oxlint": "^1.81.0",
+        "sharp": "^0.35.5",
         "typescript": "~6.0.2",
         "vite": "^8.3.0"
     }

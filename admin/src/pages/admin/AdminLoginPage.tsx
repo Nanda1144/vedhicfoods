@@ -29,6 +29,7 @@ export function AdminLoginPage() {
   }
 
   const from = (location.state as { from?: string } | null)?.from
+  const expired = (location.state as { expired?: boolean } | null)?.expired
 
   const submit = async (event: { preventDefault: () => void }) => {
     event.preventDefault()
@@ -72,6 +73,12 @@ export function AdminLoginPage() {
 
         {!forgotOpen ? (
           <form className="admin-login__form" onSubmit={submit} noValidate>
+            {expired && !error && (
+              <div className="admin-alert is-info" role="status">
+                <Icon name="alert" size={16} />
+                <span>Your session has expired. Please sign in again.</span>
+              </div>
+            )}
             <Input
               label="Email address"
               type="email"

@@ -31,6 +31,14 @@ export interface OrderAccessTokenClaims {
   tokenType: 'order'
 }
 
+/** Ensures a guest order bearer remains bound to the order that minted it. */
+export function orderAccessTokenMatchesOrder(
+  claims: OrderAccessTokenClaims | undefined,
+  orderId: string
+): boolean {
+  return !claims || claims.orderId === orderId
+}
+
 export function signOrderAccessToken(input: {
   orderId: string
   userId: string

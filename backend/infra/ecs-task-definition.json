@@ -103,7 +103,7 @@
         { "name": "SNS_VERIFY_SIGNATURE", "value": "true" },
 
         { "name": "AWS_S3_BUCKET", "value": "REPLACE_ME_S3_BUCKET" },
-        { "name": "AWS_SES_FROM_NAME", "value": "Vedhic Foods" },
+        { "name": "AWS_S3_PUBLIC_BASE_URL", "value": "https://cdn.vedhicfoods.com" },
 
         { "name": "FRONTEND_URL", "value": "https://vedhicfoods.com" },
         { "name": "ADMIN_FRONTEND_URL", "value": "https://admin.vedhicfoods.com" }
@@ -117,56 +117,20 @@
         "connections unless the instance parameter group allows otherwise, and an",
         "unencrypted connection would expose credentials in transit.",
         "",
-        "`dependsOn` guarantees the agent resolves every secret BEFORE starting the",
-        "container, so the app never boots against a half-populated environment."
+        "Each entry is exactly the ECS `Secret` shape ({ name, valueFrom }). The",
+        "agent resolves and injects every secret BEFORE the container's ENTRYPOINT",
+        "runs, so the app can never boot against a half-populated environment.",
+        "`dependsOn` is NOT valid here - it belongs on the container definition and",
+        "is rejected by register-task-definition inside a secret object."
       ],
       "secrets": [
-        {
-          "name": "DATABASE_URL",
-          "valueFrom": "REPLACE_ME_SECRET_ARN_DATABASE_URL",
-          "dependsOn": [
-            { "name": "DATABASE_URL", "valueFrom": "REPLACE_ME_SECRET_ARN_DATABASE_URL" }
-          ]
-        },
-        {
-          "name": "JWT_SECRET",
-          "valueFrom": "REPLACE_ME_SECRET_ARN_JWT_SECRET",
-          "dependsOn": [
-            { "name": "JWT_SECRET", "valueFrom": "REPLACE_ME_SECRET_ARN_JWT_SECRET" }
-          ]
-        },
-        {
-          "name": "ENCRYPTION_KEY",
-          "valueFrom": "REPLACE_ME_SECRET_ARN_ENCRYPTION_KEY",
-          "dependsOn": [
-            { "name": "ENCRYPTION_KEY", "valueFrom": "REPLACE_ME_SECRET_ARN_ENCRYPTION_KEY" }
-          ]
-        },
-        {
-          "name": "RAZORPAY_KEY_ID",
-          "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_KEY_ID",
-          "dependsOn": [
-            { "name": "RAZORPAY_KEY_ID", "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_KEY_ID" }
-          ]
-        },
-        {
-          "name": "RAZORPAY_KEY_SECRET",
-          "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_KEY_SECRET",
-          "dependsOn": [
-            { "name": "RAZORPAY_KEY_SECRET", "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_KEY_SECRET" }
-          ]
-        },
-        {
-          "name": "RAZORPAY_WEBHOOK_SECRET",
-          "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_WEBHOOK_SECRET",
-          "dependsOn": [
-            { "name": "RAZORPAY_WEBHOOK_SECRET", "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_WEBHOOK_SECRET" }
-          ]
-        },
-        {
-          "name": "BREVO_API_KEY",
-          "valueFrom": "REPLACE_ME_SECRET_ARN_BREVO_API_KEY"
-        }
+        { "name": "DATABASE_URL", "valueFrom": "REPLACE_ME_SECRET_ARN_DATABASE_URL" },
+        { "name": "JWT_SECRET", "valueFrom": "REPLACE_ME_SECRET_ARN_JWT_SECRET" },
+        { "name": "ENCRYPTION_KEY", "valueFrom": "REPLACE_ME_SECRET_ARN_ENCRYPTION_KEY" },
+        { "name": "RAZORPAY_KEY_ID", "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_KEY_ID" },
+        { "name": "RAZORPAY_KEY_SECRET", "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_KEY_SECRET" },
+        { "name": "RAZORPAY_WEBHOOK_SECRET", "valueFrom": "REPLACE_ME_SECRET_ARN_RAZORPAY_WEBHOOK_SECRET" },
+        { "name": "BREVO_API_KEY", "valueFrom": "REPLACE_ME_SECRET_ARN_BREVO_API_KEY" }
       ],
 
       "_HEALTHCHECK_NOTE": [
@@ -197,10 +161,12 @@
         "REPLACE_ME must match the CloudWatch log group created by",
         "infra/scripts/create-cloudwatch.ps1.",
         "",
-        "`awslogs-create-group: true` is only a fallback: the execution role in",
-        "iam-policies.json grants no `logs:CreateLogGroup`, so if the group is",
-        "missing the agent's create call is denied. Run create-cloudwatch.ps1",
-        "before the first task starts."
+        "`awslogs-create-group: true` is a fallback: the execution role in",
+        "iam-policies.json now grants `logs:CreateLogGroup` (scoped to the",
+        "`vedhicfoods/*` prefix), so a missing group no longer denies the agent's",
+        "create call. Run create-cloudwatch.ps1 before the first task starts to",
+        "also assert the retention policy - an auto-created group defaults to",
+        "never-expire."
       ],
       "logConfiguration": {
         "logDriver": "awslogs",

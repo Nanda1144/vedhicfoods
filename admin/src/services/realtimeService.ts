@@ -44,6 +44,29 @@ function parse(data: string): unknown {
   }
 }
 
+/** Longest wait between reconnect attempts. */
+const MAX_BACKOFF_MS = 60_000
+/** First retry delay after a drop; doubles on each consecutive failure. */
+const BASE_BACKOFF_MS = 1_000
+/**
+ * A stream that drops sooner than this is treated as "the backend is still
+ * failing" rather than "a healthy connection blipped", so the backoff keeps
+ * growing. The backend dev server restarts on every file save; without this the
+ * `open` -> immediate reset cycle kept resetting the counter and produced a
+ * reconnect every couple of seconds.
+ */
+const STABLE_CONNECTION_MS = 15_000
+
+/**
+ * Exponential backoff with full jitter. The jitter keeps a fleet of consoles
+ * from reconnecting in lockstep after an outage, which would otherwise look like
+ * a self-inflicted thundering herd against the API.
+ */
+function backoffDelay(attempt: number): number {
+  const capped = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** Math.min(attempt, 6))
+  return Math.round(capped / 2 + Math.random() * (capped / 2))
+}
+
 /**
  * Opens the SSE stream and keeps it alive across token rotation and transient
  * network drops. Returns a teardown function; call it on unmount.
@@ -68,8 +91,10 @@ export function connectRealtime(handlers: RealtimeHandlers): () => void {
     const es = new EventSource(url)
     source = es
 
+    let openedAt = 0
+
     es.addEventListener('open', () => {
-      attempt = 0
+      openedAt = Date.now()
       handlers.onStatus?.('open')
     })
 
@@ -84,9 +109,11 @@ export function connectRealtime(handlers: RealtimeHandlers): () => void {
       es.close()
       if (source === es) source = null
       if (closed) return
+      // Only a connection that stayed up long enough counts as recovered; a
+      // stream that opens and immediately resets is still a failing backend.
+      if (openedAt && Date.now() - openedAt >= STABLE_CONNECTION_MS) attempt = 0
       attempt += 1
-      const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5))
-      reconnectTimer = setTimeout(open, delay)
+      reconnectTimer = setTimeout(open, backoffDelay(attempt))
     })
   }
 

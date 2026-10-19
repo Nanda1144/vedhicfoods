@@ -7,8 +7,7 @@ import { useToast } from '@/context'
 import { formatCurrency } from '@/utils/format'
 import { AdminPageHeader, DataTable, StatusPill, ConfirmDialog, AdminToolbar, PaginationBar, ImageUploadField } from '@/components/admin'
 import type { Column } from '@/components/admin'
-import type { Product } from '@/types'
-import { CATEGORIES } from '@/data/categories'
+import type { Product, Category } from '@/types'
 import { Badge, Button, Modal, Skeleton } from '@/components/common'
 import { Field, Input, Select, Switch, Textarea } from '@/components/common/form'
 
@@ -30,6 +29,8 @@ export function AdminProductsPage() {
   const [busy, setBusy] = useState(false)
 
   const { data, loading, error, run } = useAsync(() => adminService.products(), [])
+  const { data: categoriesData } = useAsync(() => adminService.categories(), [])
+  const categories = useMemo(() => categoriesData ?? [], [categoriesData])
 
   const filtered = useMemo(() => {
     const products = data ?? []
@@ -51,13 +52,13 @@ export function AdminProductsPage() {
 
   const categoriesColumn = useMemo(() => {
     const products = data ?? []
-    const byCategory = CATEGORIES.map((cat) => ({
+    const byCategory = categories.map((cat) => ({
       category: cat,
       count: products.filter((product) => product.categorySlug === cat.slug).length,
     }))
     const allCount = products.length
     return { byCategory: byCategory.filter((entry) => entry.count > 0).sort((a, b) => b.count - a.count), allCount }
-  }, [data])
+  }, [data, categories])
 
   if (loading && !data) {
     return (
@@ -225,7 +226,7 @@ export function AdminProductsPage() {
             }}
             searchPlaceholder="Search by name, SKU or category…"
             filters={[
-              { label: 'Category', value: category, options: CATEGORIES.map((cat) => cat.slug.replace(/-/g, ' ')), onChange: setCategory },
+              { label: 'Category', value: category, options: categories.map((cat) => cat.slug), onChange: setCategory },
               { label: 'Stock', value: stockFilter, options: ['In stock', 'Low stock', 'Out of stock'], onChange: setStockFilter },
             ]}
           >
@@ -301,6 +302,7 @@ export function AdminProductsPage() {
       {editing && (
         <ProductModal
           product={editing === 'new' ? null : editing}
+          categories={categories}
           onClose={() => {
             setEditing(null)
             setParams({}, { replace: true })
@@ -342,12 +344,12 @@ export function AdminProductsPage() {
   )
 }
 
-function ProductModal({ product, onClose, onSaved }: { product: Product | null; onClose: () => void; onSaved: () => void }) {
+function ProductModal({ product, categories, onClose, onSaved }: { product: Product | null; categories: Category[]; onClose: () => void; onSaved: () => void }) {
   const { push } = useToast()
   const isNew = product === null
   const [form, setForm] = useState({
     name: product?.name ?? '',
-    categorySlug: product?.categorySlug ?? CATEGORIES[0]?.slug ?? '',
+    categorySlug: product?.categorySlug ?? categories[0]?.slug ?? '',
     price: product?.price ?? '',
     mrp: product?.mrp ?? '',
     unit: product?.unit ?? '250 g',
@@ -387,7 +389,7 @@ function ProductModal({ product, onClose, onSaved }: { product: Product | null; 
         currency: 'INR' as const,
         unit: form.unit,
         netWeight: Number(form.netWeight),
-        images: form.image ? [form.image] : [''],
+        images: form.image ? [form.image] : [],
         tags: form.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
         shortDescription: form.shortDescription,
         description: form.description,
@@ -449,7 +451,7 @@ function ProductModal({ product, onClose, onSaved }: { product: Product | null; 
               value={form.categorySlug}
               onChange={(event) => patch('categorySlug', event.target.value)}
               aria-label="Category"
-              options={CATEGORIES.map((category) => ({ value: category.slug, label: category.name }))}
+              options={categories.map((category) => ({ value: category.slug, label: category.name }))}
             />
           </Field>
           <Field label="Selling price (₹)" required>

@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
-import { HERO_IMAGES_DESKTOP, HERO_IMAGES_MOBILE, TRUST_BADGES, COMPANY_MILESTONES } from '@/config/site'
+import { useCallback, useState } from 'react'
+import { TRUST_BADGES, COMPANY_MILESTONES } from '@/config/site'
 import { productService } from '@/services/productService'
 import { contentService, newsletterService } from '@/services/contentService'
-import { useAsync, useMediaQuery } from '@/hooks'
+import { useAsync } from '@/hooks'
 import { useToast, useSettings } from '@/context'
 import type { IconName } from '@/components/common'
 import {
@@ -11,14 +11,16 @@ import {
   SectionHeader,
   SectionLink,
   Reveal,
-  Badge,
   ProductGridSkeleton,
   FaqSection,
   ErrorState,
   EmptyState,
+  Skeleton,
 } from '@/components/common'
 import { ProductGrid, CategoryCard } from '@/components/product'
-import { Testimonials } from '@/components/home/Testimonials'
+import { HeroSlider, Testimonials } from '@/components/home'
+import traditionalPreparationImage from '@assets/body/Tradition-Preparation.webp'
+import organicIngredientsImage from '@assets/body/organic-ingredients.webp'
 
 const TRUST_ICONS: Array<IconName> = ['leaf', 'shield', 'truck', 'award']
 
@@ -63,7 +65,7 @@ export function HomePage() {
 
   return (
     <>
-      <Hero announcement={settings.announcementActive ? settings.announcement : settings.tagline} />
+      <HeroSlider announcement={settings.announcementActive ? settings.announcement : settings.tagline} />
 
       <section className="section section--alt trust-strip" aria-label="Why shop with Vedhic">
         <div className="container trust-strip__grid">
@@ -89,13 +91,29 @@ export function HomePage() {
             description="Every category is made in small batches from single-origin organic grains."
             action={<SectionLink to="/categories">View all categories</SectionLink>}
           />
-          <div className="category-grid category-grid--4">
-            {featuredCategories.map((category, index) => (
-              <Reveal key={category.id} delay={index * 60}>
-                <CategoryCard category={category} />
-              </Reveal>
-            ))}
-          </div>
+          {categories.loading ? (
+            <div className="category-grid category-grid--4">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Skeleton key={index} style={{ width: '100%', aspectRatio: '4 / 5', borderRadius: 'var(--radius-lg)' }} />
+              ))}
+            </div>
+          ) : categories.error ? (
+            <ErrorState
+              title="Categories could not be loaded"
+              description={categories.error.message || 'We could not reach the product service. Please try again.'}
+              onRetry={() => void categories.run().catch(() => {})}
+            />
+          ) : featuredCategories.length ? (
+            <div className="category-grid category-grid--4">
+              {featuredCategories.map((category, index) => (
+                <Reveal key={category.id} delay={index * 60}>
+                  <CategoryCard category={category} />
+                </Reveal>
+              ))}
+            </div>
+          ) : (
+            <EmptyState title="No categories are published yet." />
+          )}
         </div>
       </section>
 
@@ -116,7 +134,7 @@ export function HomePage() {
                 bestSellers.error.message ||
                 'We could not reach the product service. Please try again.'
               }
-              onRetry={() => void bestSellers.run()}
+              onRetry={() => void bestSellers.run().catch(() => {})}
             />
           ) : bestSellers.data?.length ? (
             <ProductGrid products={bestSellers.data} />
@@ -142,7 +160,7 @@ export function HomePage() {
               description={
                 premium.error.message || 'We could not reach the product service. Please try again.'
               }
-              onRetry={() => void premium.run()}
+              onRetry={() => void premium.run().catch(() => {})}
             />
           ) : premium.data?.length ? (
             <ProductGrid products={premium.data} />
@@ -154,23 +172,15 @@ export function HomePage() {
 
       <section className="section">
         <div className="container">
-          <div className="split split--feature">
-            <Reveal className="split__media-wrap">
-              <div
-                className="split__media"
-                style={{ backgroundImage: 'url(https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=1200&q=80)' }}
-                role="img"
-                aria-label="A farm basket of organic grains and millets"
-              />
-            </Reveal>
-            <div className="split__copy">
+          <div className="why-vedhic">
+            <div className="why-vedhic__copy">
               <SectionHeader
                 eyebrow="Why Vedhic"
                 title="Slow-made, honestly priced, deeply good"
                 description="We pay real prices to real farmers, mill in small lots and never cut corners with preservatives."
-                align="left"
+                align="center"
               />
-              <ul className="feature-list">
+              <ul className="feature-list feature-list--grid">
                 {FEATURES.map((item) => (
                   <li key={item.title} className="feature-item">
                     <span className="feature-item__icon">
@@ -183,9 +193,11 @@ export function HomePage() {
                   </li>
                 ))}
               </ul>
-              <ButtonLink to="/about" variant="outline">
-                More about us
-              </ButtonLink>
+              <div className="why-vedhic__cta">
+                <ButtonLink to="/about" variant="outline">
+                  More about us
+                </ButtonLink>
+              </div>
             </div>
           </div>
         </div>
@@ -196,10 +208,10 @@ export function HomePage() {
           <div className="split">
             <Reveal className="split__media-wrap">
               <div
-                className="split__media"
-                style={{ backgroundImage: 'url(https://images.unsplash.com/photo-1586201375761-83865001e31c?auto=format&fit=crop&w=1200&q=80)' }}
+                className="split__media split__media--soft"
+                style={{ backgroundImage: `url(${traditionalPreparationImage})` }}
                 role="img"
-                aria-label="A hand ground bowl of millet flour being prepared"
+                aria-label="Traditional preparation of millet flour by hand"
               />
             </Reveal>
             <div className="split__copy">
@@ -256,10 +268,10 @@ export function HomePage() {
             </div>
             <Reveal className="split__media-wrap">
               <div
-                className="split__media"
-                style={{ backgroundImage: 'url(https://images.unsplash.com/photo-1464226184884-fa280b87c399?auto=format&fit=crop&w=1200&q=80)' }}
+                className="split__media split__media--soft"
+                style={{ backgroundImage: `url(${organicIngredientsImage})` }}
                 role="img"
-                aria-label="Greens growing on an organic farm"
+                aria-label="Organic ingredients laid out on a wooden surface"
               />
             </Reveal>
           </div>
@@ -277,32 +289,34 @@ export function HomePage() {
         </div>
       </section>
 
-      <section className="section" id="story">
-        <div className="container">
-          <SectionHeader
-            eyebrow="Our story"
-            title="Slow food, since 2009"
-            description="A family kitchen grew into a small-batch mill — the recipes, the sourcing and the standards never changed."
-            align="center"
-          />
-          <div className="milestones">
-            {COMPANY_MILESTONES.map((milestone, index) => (
-              <Reveal key={milestone.year} delay={index * 80}>
-                <article className="milestone-card">
-                  <span className="milestone-card__year">{milestone.year}</span>
-                  <h3>{milestone.title}</h3>
-                  <p>{milestone.copy}</p>
-                </article>
-              </Reveal>
-            ))}
+      {settings.storyEnabled && (
+        <section className="section" id="story">
+          <div className="container">
+            <SectionHeader
+              eyebrow="Our story"
+              title="Slow food, since 2009"
+              description="A family kitchen grew into a small-batch mill — the recipes, the sourcing and the standards never changed."
+              align="center"
+            />
+            <div className="milestones">
+              {COMPANY_MILESTONES.map((milestone, index) => (
+                <Reveal key={milestone.year} delay={index * 80}>
+                  <article className="milestone-card">
+                    <span className="milestone-card__year">{milestone.year}</span>
+                    <h3>{milestone.title}</h3>
+                    <p>{milestone.copy}</p>
+                  </article>
+                </Reveal>
+              ))}
+            </div>
+            <div className="milestones__cta">
+              <ButtonLink to="/about" size="lg" iconRight="arrow-right">
+                Read more of our story
+              </ButtonLink>
+            </div>
           </div>
-          <div className="milestones__cta">
-            <ButtonLink to="/about" size="lg" iconRight="arrow-right">
-              Read more of our story
-            </ButtonLink>
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       <section className="section">
         <div className="container">
@@ -310,6 +324,7 @@ export function HomePage() {
             eyebrow="Questions, answered"
             title="Before you ask"
             description="Straight answers about shipping, orders, returns and what goes into every pack."
+            limit={10}
           />
         </div>
       </section>
@@ -330,98 +345,6 @@ export function HomePage() {
   )
 }
 
-/** How long each hero background image stays on screen before cross-fading. */
-const HERO_IMAGE_INTERVAL_MS = 6000
-
-/** Storefront breakpoint below which the mobile hero image set is preferred. */
-const HERO_MOBILE_QUERY = '(max-width: 767px)'
-
-function Hero({ announcement }: { announcement: string }) {
-  const { settings } = useSettings()
-  const isNarrow = useMediaQuery(HERO_MOBILE_QUERY)
-  // Admin-published images win; otherwise use the build-time `assests/` folder,
-  // preferring `assests/mobile` on narrow screens while it still has images.
-  const buildTimeImages = isNarrow && HERO_IMAGES_MOBILE.length > 0 ? HERO_IMAGES_MOBILE : HERO_IMAGES_DESKTOP
-  const heroImages = settings.heroImages?.length ? settings.heroImages : buildTimeImages
-  const [activeImage, setActiveImage] = useState(0)
-
-  useEffect(() => {
-    if (heroImages.length <= 1) return
-    const timer = window.setInterval(
-      () => setActiveImage((index) => (index + 1) % heroImages.length),
-      HERO_IMAGE_INTERVAL_MS,
-    )
-    return () => window.clearInterval(timer)
-  }, [heroImages.length])
-
-  // Guard against a shrunken list (admin removed images) leaving the index OOB.
-  useEffect(() => {
-    if (activeImage >= heroImages.length) setActiveImage(0)
-  }, [activeImage, heroImages.length])
-
-  return (
-    <section className="hero">
-      <div className="hero__bg" aria-hidden="true">
-        {heroImages.length > 0 && (
-          <div className="hero__bg-images">
-            {heroImages.map((src, index) => (
-              <span
-                key={`${index}-${src.slice(0, 32)}`}
-                className={`hero__bg-image${index === activeImage ? ' is-active' : ''}`}
-                style={{ backgroundImage: `url("${src.replace(/"/g, '\\"')}")` }}
-              />
-            ))}
-            <span className="hero__bg-scrim" />
-          </div>
-        )}
-        <span className="hero__bg-sphere hero__bg-sphere--gold" />
-        <span className="hero__bg-sphere hero__bg-sphere--olive" />
-        <span className="hero__bg-wheel" />
-        <span className="hero__bg-ring hero__bg-ring--a" />
-        <span className="hero__bg-ring hero__bg-ring--b" />
-      </div>
-      <div className="hero__inner container">
-        <div className="hero__copy">
-          <Badge tone="accent" dot>
-            {announcement}
-          </Badge>
-          <h1 className="hero__title">
-            {settings.heroTitle}
-            {settings.heroTitleAccent ? <span className="text-accent"> {settings.heroTitleAccent}</span> : null}
-          </h1>
-          <p className="hero__lead">{settings.heroSubtitle}</p>
-          <div className="hero__actions">
-            <ButtonLink to="/shop" size="lg" iconRight="arrow-right">
-              {settings.heroCtaLabel || 'Shop now'}
-            </ButtonLink>
-            <ButtonLink to="/shop" variant="outline" size="lg" icon="leaf">
-              Explore products
-            </ButtonLink>
-          </div>
-          <div className="hero__perks">
-            {TRUST_BADGES.slice(0, 3).map((badge, index) => (
-              <span key={badge.title} className="chip chip--ghost">
-                <Icon name={TRUST_ICONS[index]} size={15} />
-                {badge.title}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="hero__media" aria-hidden="true">
-          <div className="hero__plate">
-            <div className="hero__plate-glow" />
-            <div className="hero__plate-laddu is-1" />
-            <div className="hero__plate-laddu is-2" />
-            <div className="hero__plate-laddu is-3" />
-            <span className="hero__caption">Slow-made · Small-batch</span>
-          </div>
-        </div>
-      </div>
-      <div className="hero__grain" aria-hidden="true" />
-    </section>
-  )
-}
-
 function NewsletterForm({ onSubscribe }: { onSubscribe: (email: string) => Promise<void> }) {
   const [email, setEmail] = useState('')
   const [busy, setBusy] = useState(false)
@@ -437,6 +360,12 @@ function NewsletterForm({ onSubscribe }: { onSubscribe: (email: string) => Promi
     try {
       await onSubscribe(email)
       setEmail('')
+    } catch (caught) {
+      push({
+        title: 'Sign-up failed',
+        description: caught instanceof Error ? caught.message : 'Please try again in a moment.',
+        tone: 'danger',
+      })
     } finally {
       setBusy(false)
     }

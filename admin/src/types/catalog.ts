@@ -29,6 +29,8 @@ export interface Product {
   slug: string
   name: string
   categorySlug: string
+  /** Category display name supplied by the backend product projection. */
+  categoryName?: string
   shortDescription: string
   description: string
   /** Selling price in the smallest currency unit avoided — plain INR value. */

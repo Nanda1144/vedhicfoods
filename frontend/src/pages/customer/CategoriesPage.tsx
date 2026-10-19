@@ -1,6 +1,6 @@
 import { productService } from '@/services/productService'
 import { useAsync } from '@/hooks'
-import { PageHeader, Reveal, Skeleton } from '@/components/common'
+import { PageHeader, Reveal, Skeleton, EmptyState, ErrorState, ButtonLink } from '@/components/common'
 import { CategoryCard } from '@/components/product'
 
 export function CategoriesPage() {
@@ -21,6 +21,12 @@ export function CategoriesPage() {
                 <Skeleton key={index} style={{ width: '100%', aspectRatio: '4 / 5', borderRadius: 'var(--radius-lg)' }} />
               ))}
             </div>
+          ) : categories.error ? (
+            <ErrorState
+              title="We couldn't load the categories"
+              description={categories.error.message || 'The shop is briefly unavailable. Please try again.'}
+              onRetry={() => void categories.run().catch(() => {})}
+            />
           ) : categories.data?.length ? (
             <div className="category-grid category-grid--3">
               {categories.data.map((category, index) => (
@@ -29,7 +35,13 @@ export function CategoriesPage() {
                 </Reveal>
               ))}
             </div>
-          ) : null}
+          ) : (
+            <EmptyState
+              title="No categories yet"
+              description="Our shelves are being restocked. Browse the full shop in the meantime."
+              action={<ButtonLink to="/shop" variant="primary">Browse the shop</ButtonLink>}
+            />
+          )}
         </div>
       </section>
     </>

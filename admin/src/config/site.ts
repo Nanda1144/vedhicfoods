@@ -53,6 +53,7 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   heroSubtitle: SITE.description,
   heroCtaLabel: 'Shop now',
   heroImages: [],
+  storyEnabled: false,
 }
 
 export const COMPANY_MILESTONES = [

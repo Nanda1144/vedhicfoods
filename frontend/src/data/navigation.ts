@@ -47,9 +47,9 @@ export const FOOTER_NAV: Record<
   legal: {
     title: 'Legal',
     links: [
-      { label: 'Privacy policy', href: '/faq' },
-      { label: 'Terms of service', href: '/faq' },
-      { label: 'Refund policy', href: '/faq#returns' },
+      { label: 'Privacy policy', href: '/privacy' },
+      { label: 'Terms of service', href: '/terms' },
+      { label: 'Refund policy', href: '/refund-policy' },
     ],
   },
 }
@@ -66,7 +66,3 @@ export const ACCOUNT_MENU: AccountMenuEntry[] = [
   { label: 'FAQs & help', description: 'Shipping, returns & more', href: '/faq' },
   { label: 'Customer Support', description: 'Reach our team', href: '/contact' },
 ]
-
-export function isCustomerMenuEntry(_entry: AccountMenuEntry): boolean {
-  return false
-}

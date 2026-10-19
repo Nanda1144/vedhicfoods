@@ -21,6 +21,7 @@ export const SITE = {
   supportPhone: '+91 90000 12345',
   whatsapp: '+91 90000 12345',
   gstin: '29ABCDE1234F1Z5',
+  fssaiLicense: '10024031000123',
   currency: 'INR' as const,
   currencySymbol: '₹',
   freeShippingThreshold: 999,
@@ -58,58 +59,9 @@ export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   heroSubtitle: SITE.description,
   heroCtaLabel: 'Shop now',
   heroImages: [],
+  storyEnabled: false,
+  codEnabled: false,
 }
-
-/**
- * Hero background images supplied at build time.
- *
- * Used only as a fallback when the admin console has not published any hero
- * images (`website_hero_images`). Resolution order:
- *   1. `VITE_HERO_IMAGES` env override (comma-separated URLs or `/public` paths)
- *   2. Images auto-discovered in the repo-root `assests/` folder by Vite.
- *
- * The folder is viewport-aware:
- *   - `assests/desktop/` (plus any image dropped directly in `assests/`) is
- *     shown on wide screens.
- *   - `assests/mobile/` is shown on narrow screens, falling back to the desktop
- *     set while it is still empty.
- *
- * Just drop jpg/png/webp/avif files into those folders — no code change needed.
- * Restart the dev server after adding files so the glob picks them up.
- */
-function discoverHeroImages(glob: Record<string, string>): string[] {
-  return Object.keys(glob)
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-    .map((key) => glob[key]!)
-}
-
-const HERO_ENV_OVERRIDE = ((import.meta.env.VITE_HERO_IMAGES as string | undefined) ?? '')
-  .split(',')
-  .map((entry) => entry.trim())
-  .filter(Boolean)
-
-const HERO_IMAGES_DESKTOP_DISCOVERED = discoverHeroImages(
-  import.meta.glob<string>('@assets/*.{jpg,jpeg,png,webp,avif}', { eager: true, import: 'default' }),
-).concat(
-  discoverHeroImages(
-    import.meta.glob<string>('@assets/desktop/**/*.{jpg,jpeg,png,webp,avif}', { eager: true, import: 'default' }),
-  ),
-)
-
-const HERO_IMAGES_MOBILE_DISCOVERED = discoverHeroImages(
-  import.meta.glob<string>('@assets/mobile/**/*.{jpg,jpeg,png,webp,avif}', { eager: true, import: 'default' }),
-)
-
-/** Wide-screen build-time hero backgrounds (env override wins when set). */
-export const HERO_IMAGES_DESKTOP: string[] =
-  HERO_ENV_OVERRIDE.length > 0 ? HERO_ENV_OVERRIDE : HERO_IMAGES_DESKTOP_DISCOVERED
-
-/** Narrow-screen build-time hero backgrounds (env override wins when set). */
-export const HERO_IMAGES_MOBILE: string[] =
-  HERO_ENV_OVERRIDE.length > 0 ? HERO_ENV_OVERRIDE : HERO_IMAGES_MOBILE_DISCOVERED
-
-/** Backwards-compatible alias: the desktop build-time set. */
-export const HERO_IMAGES_FALLBACK: string[] = HERO_IMAGES_DESKTOP
 
 export const COMPANY_MILESTONES = [
   { year: '2009', title: 'A family kitchen', copy: 'Recipes passed down three generations, first sold at a village market.' },
@@ -126,12 +78,8 @@ export const TRUST_BADGES = [
 ] as const
 
 export const STORAGE_KEYS = {
-  cart: 'vedhic.cart.v1',
   theme: 'vedhic.theme.v1',
   settings: 'vedhic.settings.v1',
   coupon: 'vedhic.coupon.v1',
-  orders: 'vedhic.orders.v1',
   adminSession: 'vedhic.admin.session.v1',
-  adminData: 'vedhic.admin.data.v1',
-  recentProducts: 'vedhic.recent.v1',
 } as const

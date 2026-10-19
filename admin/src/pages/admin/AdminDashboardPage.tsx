@@ -1,12 +1,15 @@
 import { Link } from 'react-router-dom'
 import { adminService } from '@/services/adminService'
-import { useAsync } from '@/hooks'
+import { useAsync, useRealtimeEvents } from '@/hooks'
 import { formatCurrency, formatNumber } from '@/utils/format'
 import { AdminPageHeader, StatCard, DataTable, StatusPill, BackendConnectionCard, SessionDetailsCard } from '@/components/admin'
 import type { Column } from '@/components/admin'
 import type { Customer, Order } from '@/types'
 import { Icon, Skeleton } from '@/components/common'
 import { useAdminAuth } from '@/context/AdminAuthContext'
+
+/** Order channels that move the dashboard's counts, revenue and recent orders. */
+const ORDER_EVENTS = ['order.created', 'order.updated'] as const
 
 const TONE_MAP = {
   neutral: 'neutral',
@@ -38,6 +41,14 @@ export function AdminDashboardPage() {
   const metrics = result.data?.metrics ?? []
   const categoryPerformance = result.data?.categoryPerformance ?? []
   const lowStockCount = result.data?.lowStockCount ?? 0
+
+  // Reflect new orders and status changes without a reload. The hook coalesces
+  // bursts, so a checkout surge triggers one dashboard refetch, not one per event.
+  useRealtimeEvents(ORDER_EVENTS, () => {
+    void result.run().catch(() => {
+      // Best-effort background refresh; the next event retries.
+    })
+  })
 
   if (result.loading && !result.data) {
     return (

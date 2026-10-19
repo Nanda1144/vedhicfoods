@@ -1,6 +1,24 @@
 import { z } from 'zod'
 import { ProductStatus } from '@prisma/client'
 
+/**
+ * A `z.coerce.number()` that only coerces genuine numeric scalars.
+ *
+ * `z.coerce.number()` leans on JavaScript's `Number()`, which maps `true` to 1,
+ * `[5]` to 5, `[]` to 0 and `null` to 0. A JSON client sending `{"price": true}`
+ * therefore created a product priced at 1 rather than receiving a validation
+ * error. Boolean, array, object and explicit-null inputs are normalised to
+ * `undefined` first so the numeric schema below rejects them; numeric strings
+ * (the reason coercion exists) are still accepted.
+ */
+const coercedNumber = (schema: z.ZodNumber) =>
+  z.preprocess((value) => {
+    if (value === null || typeof value === 'boolean' || typeof value === 'object') {
+      return undefined
+    }
+    return value
+  }, schema)
+
 // ==========================================
 // CATEGORY SCHEMAS & TYPES
 // ==========================================
@@ -55,6 +73,27 @@ export interface CategoryHierarchyResponse {
 // PRODUCT SCHEMAS & TYPES
 // ==========================================
 
+/**
+ * A product gallery entry is either a bare URL string (a direct media URL with
+ * no backing object) or a rich object describing an uploaded image.
+ *
+ * Create and update share this exact union. When update declared only
+ * `string[]`, an object-form gallery that created fine was rejected with a 400
+ * on the very next edit.
+ */
+const productImageInputSchema = z.union([
+  z.string().url(),
+  z.object({
+    imageUrl: z.string().url(),
+    s3Key: z.string().optional(),
+    altText: z.string().optional(),
+    isPrimary: z.boolean().optional(),
+    displayOrder: z.number().int().min(0).optional(),
+  }),
+])
+
+const productImagesSchema = z.array(productImageInputSchema).optional()
+
 export const createProductSchema = z
   .object({
     name: z.string().trim().min(2, 'Product name must be at least 2 characters').max(200),
@@ -69,15 +108,15 @@ export const createProductSchema = z
     categorySlug: z.string().trim().optional(),
     shortDescription: z.string().trim().max(500).optional(),
     description: z.string().trim().optional(),
-    price: z.coerce.number().positive('Selling price must be greater than zero'),
-    mrp: z.coerce.number().positive('MRP must be greater than zero'),
-    discount: z.coerce.number().min(0).optional(),
+    price: coercedNumber(z.coerce.number().positive('Selling price must be greater than zero')),
+    mrp: coercedNumber(z.coerce.number().positive('MRP must be greater than zero')),
+    discount: coercedNumber(z.coerce.number().min(0)).optional(),
     currency: z.string().default('INR'),
     unit: z.string().trim().default('piece'),
-    netWeight: z.coerce.number().min(0).default(0),
-    stock: z.coerce.number().int().min(0).default(0),
-    rating: z.coerce.number().min(0).max(5).default(4.8),
-    reviewCount: z.coerce.number().int().min(0).default(0),
+    netWeight: coercedNumber(z.coerce.number().min(0)).default(0),
+    stock: coercedNumber(z.coerce.number().int().min(0)).default(0),
+    rating: coercedNumber(z.coerce.number().min(0).max(5)).default(4.8),
+    reviewCount: coercedNumber(z.coerce.number().int().min(0)).default(0),
     tags: z.array(z.string().trim()).default([]),
     ingredients: z.array(z.string().trim()).default([]),
     allergens: z.array(z.string().trim()).default([]),
@@ -94,20 +133,7 @@ export const createProductSchema = z
     metaTitle: z.string().trim().max(200).optional(),
     metaDescription: z.string().trim().max(500).optional(),
     metaKeywords: z.array(z.string().trim()).default([]),
-    images: z
-      .array(
-        z.union([
-          z.string().url(),
-          z.object({
-            imageUrl: z.string().url(),
-            s3Key: z.string().optional(),
-            altText: z.string().optional(),
-            isPrimary: z.boolean().optional(),
-            displayOrder: z.number().int().min(0).optional(),
-          }),
-        ])
-      )
-      .optional(),
+    images: productImagesSchema,
   })
   .refine(
     (data) => data.price <= data.mrp,
@@ -131,15 +157,15 @@ export const updateProductSchema = z
     categorySlug: z.string().trim().optional(),
     shortDescription: z.string().trim().max(500).optional(),
     description: z.string().trim().optional(),
-    price: z.coerce.number().positive().optional(),
-    mrp: z.coerce.number().positive().optional(),
-    discount: z.coerce.number().min(0).optional(),
+    price: coercedNumber(z.coerce.number().positive()).optional(),
+    mrp: coercedNumber(z.coerce.number().positive()).optional(),
+    discount: coercedNumber(z.coerce.number().min(0)).optional(),
     currency: z.string().optional(),
     unit: z.string().trim().optional(),
-    netWeight: z.coerce.number().min(0).optional(),
-    stock: z.coerce.number().int().min(0).optional(),
-    rating: z.coerce.number().min(0).max(5).optional(),
-    reviewCount: z.coerce.number().int().min(0).optional(),
+    netWeight: coercedNumber(z.coerce.number().min(0)).optional(),
+    stock: coercedNumber(z.coerce.number().int().min(0)).optional(),
+    rating: coercedNumber(z.coerce.number().min(0).max(5)).optional(),
+    reviewCount: coercedNumber(z.coerce.number().int().min(0)).optional(),
     tags: z.array(z.string().trim()).optional(),
     ingredients: z.array(z.string().trim()).optional(),
     allergens: z.array(z.string().trim()).optional(),
@@ -157,7 +183,7 @@ export const updateProductSchema = z
     metaTitle: z.string().trim().max(200).optional(),
     metaDescription: z.string().trim().max(500).optional(),
     metaKeywords: z.array(z.string().trim()).optional(),
-    images: z.array(z.string().url()).optional(),
+    images: productImagesSchema,
   })
   .refine(
     (data) => {

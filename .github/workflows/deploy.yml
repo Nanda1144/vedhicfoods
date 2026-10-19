@@ -203,7 +203,7 @@ jobs:
             --task-definition "$ECS_TASK_DEFINITION" \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS]}" \
-            --overrides "{\"containerOverrides\":[{\"name\":\"backend\",\"command\":[\"npx\",\"prisma\",\"migrate\",\"deploy\",\"--schema\",\"database/prisma/schema.prisma\"]}]}" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"backend\",\"command\":[\"./node_modules/.bin/prisma\",\"migrate\",\"deploy\",\"--schema\",\"database/prisma/schema.prisma\"]}]}" \
             --query 'tasks[0].taskArn' --output text --region "$AWS_REGION")
 
           if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then

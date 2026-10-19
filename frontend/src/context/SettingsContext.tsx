@@ -1,43 +1,28 @@
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react'
-import { DEFAULT_WEBSITE_SETTINGS, STORAGE_KEYS } from '@/config/site'
+import { STORAGE_KEYS } from '@/config/site'
 import { applyTheme, readAppliedTheme, THEMES, type ThemeName } from '@/config/theme'
 import { settingsService } from '@/services/settingsService'
 import { storage } from '@/utils/storage'
 import type { WebsiteSettings } from '@/types'
-
-interface SettingsContextValue {
-  settings: WebsiteSettings
-  loading: boolean
-  update: (patch: Partial<WebsiteSettings>) => Promise<WebsiteSettings>
-  theme: ThemeName
-  setTheme: (theme: ThemeName) => void
-  themeOptions: typeof THEMES
-}
-
-const SettingsContext = createContext<SettingsContextValue | null>(null)
+import { SettingsContext } from './useSettings'
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
-  const [settings, setSettings] = useState<WebsiteSettings>(DEFAULT_WEBSITE_SETTINGS)
+  // Paint from the cached copy first so there is no flash of default branding,
+  // then reconcile against GET /settings. Previously this only ever read
+  // localStorage and immediately set loading=false, so branding and contact
+  // details could never change for anyone but the browser that edited them.
+  const [settings, setSettings] = useState<WebsiteSettings>(() => settingsService.read())
   const [loading, setLoading] = useState(true)
-  const [theme, setThemeState] = useState<ThemeName>('forest')
+  const [theme, setThemeState] = useState<ThemeName>(() => readAppliedTheme())
 
   useEffect(() => {
     let cancelled = false
-
-    // Paint from the cached copy first so there is no flash of default branding,
-    // then reconcile against GET /settings. Previously this only ever read
-    // localStorage and immediately set loading=false, so branding and contact
-    // details could never change for anyone but the browser that edited them.
-    setSettings(settingsService.read())
-    setThemeState(readAppliedTheme())
 
     void settingsService
       .get()
@@ -87,10 +72,4 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   )
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>
-}
-
-export function useSettings(): SettingsContextValue {
-  const context = useContext(SettingsContext)
-  if (!context) throw new Error('useSettings must be used within a SettingsProvider')
-  return context
 }

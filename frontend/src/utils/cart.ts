@@ -2,7 +2,7 @@ import { SITE } from '@/config/site'
 import type { AppliedCoupon, CartItem, CartTotals, Product } from '@/types'
 
 /** Clamps a quantity to a line's stock and a sane upper bound. */
-export function clampQuantity(value: number, stock: number, max = 99): number {
+export function clampQuantity(value: number, stock: number, max = 100): number {
   return Math.max(0, Math.min(value, stock, max))
 }
 

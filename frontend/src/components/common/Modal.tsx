@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react'
+import { useId, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/utils/cn'
 import { useEscapeKey, useFocusFirst, useFocusTrap, useLockBodyScroll } from '@/hooks'
@@ -20,12 +20,6 @@ export function Modal({ open, onClose, title, children, size = 'md', footer }: M
   useEscapeKey(onClose, open)
   useFocusFirst(panelRef, open)
   useFocusTrap(panelRef, open)
-
-  useEffect(() => {
-    if (!open) return
-    const previouslyFocused = document.activeElement as HTMLElement | null
-    return () => previouslyFocused?.focus()
-  }, [open])
 
   if (!open || typeof document === 'undefined') return null
 

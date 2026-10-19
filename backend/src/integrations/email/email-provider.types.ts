@@ -46,6 +46,6 @@ export interface EmailProvider {
   shouldSimulate(): boolean
   /** Sends and returns the provider message id. Throws on failure. */
   sendTransactionalEmail(options: SendTransactionalEmailOptions): Promise<string>
-  /** Sends with an attachment. Returns false instead of throwing. */
+  /** Sends with an attachment. Returns true on success and throws classified failures. */
   sendAttachmentEmail(options: SendAttachmentEmailOptions): Promise<boolean>
 }

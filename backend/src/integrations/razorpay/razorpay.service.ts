@@ -16,6 +16,33 @@ import { OrderStatus, PaymentRecordStatus, PaymentStatus } from '@prisma/client'
 import { InventoryService } from '../../services/inventory.service'
 import { OrderEmailService } from '../../services/order-email.service'
 
+export interface CapturedWebhookEntity {
+  id: string
+  order_id: string
+  amount: number
+  currency: string
+  status: string
+  method?: string
+}
+
+/** A captured event must contain every field needed to reconcile settlement. */
+export function validateCapturedWebhookEntity(entity: unknown): asserts entity is CapturedWebhookEntity {
+  if (!entity || typeof entity !== 'object') {
+    throw new AppError('Invalid captured payment webhook payload', HTTP_STATUS.BAD_REQUEST, ERROR_CODES.BAD_REQUEST)
+  }
+
+  const value = entity as Partial<CapturedWebhookEntity>
+  if (
+    typeof value.id !== 'string' || !value.id.trim() ||
+    typeof value.order_id !== 'string' || !value.order_id.trim() ||
+    typeof value.amount !== 'number' || !Number.isSafeInteger(value.amount) || value.amount <= 0 ||
+    typeof value.currency !== 'string' || !/^[A-Z]{3}$/.test(value.currency) ||
+    value.status !== 'captured'
+  ) {
+    throw new AppError('Invalid captured payment webhook payload', HTTP_STATUS.BAD_REQUEST, ERROR_CODES.BAD_REQUEST)
+  }
+}
+
 export interface CreateRazorpayOrderParams {
   amountInPaise: number
   currency?: string
@@ -755,6 +782,7 @@ export class RazorpayService {
 
     switch (event) {
       case 'payment.captured':
+        validateCapturedWebhookEntity(paymentEntity)
         await RazorpayService.handlePaymentCaptured(paymentEntity)
         break
 
@@ -820,7 +848,7 @@ export class RazorpayService {
     const recordedAmount = Number(payment.amount)
     const recordedAmountPaise = Math.round(recordedAmount * 100)
 
-    if (Number.isFinite(gatewayAmount) && gatewayAmount !== recordedAmountPaise) {
+    if (gatewayAmount !== recordedAmountPaise) {
       await RazorpayService.recordSettlementAnomaly({
         action: 'PAYMENT_GATEWAY_AMOUNT_MISMATCH',
         paymentRecordId: payment.id,
@@ -849,7 +877,7 @@ export class RazorpayService {
     const gatewayCurrency = String(entity.currency || '').toUpperCase()
     const recordedCurrency = String(payment.currency || 'INR').toUpperCase()
 
-    if (gatewayCurrency && gatewayCurrency !== recordedCurrency) {
+    if (gatewayCurrency !== recordedCurrency) {
       await RazorpayService.recordSettlementAnomaly({
         action: 'PAYMENT_GATEWAY_CURRENCY_MISMATCH',
         paymentRecordId: payment.id,

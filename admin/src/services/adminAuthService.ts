@@ -1,6 +1,11 @@
 import type { Permission, RoleName } from '@/types'
-import { apiFetch, ServiceError, type RequestOptions } from './http'
-import { storage } from '@/utils/storage'
+import { apiFetch, refreshAdminSession, ServiceError, type RequestOptions } from './http'
+import {
+  clearAdminSession,
+  getAdminAccessToken,
+  persistAdminSession,
+  readAdminSession,
+} from './adminSessionStore'
 
 export interface AdminSession {
   id: string
@@ -14,9 +19,6 @@ export interface AdminSession {
   remember: boolean
   signedInAt: string
 }
-
-const SESSION_KEY = 'vedhic.admin.session.v1'
-const TEMP_SESSION_KEY = 'vedhic.admin.session.temp.v1'
 
 /**
  * Admin authentication against the real backend.
@@ -158,7 +160,6 @@ export const adminAuthService = {
       title: user.name || role,
       permissions,
       token,
-      refreshToken: response?.refreshToken,
       remember,
       signedInAt: new Date().toISOString(),
     }
@@ -169,38 +170,19 @@ export const adminAuthService = {
   },
 
   logout(): void {
-    const session = this.session()
-    const refreshToken = session?.refreshToken
-
-    storage.remove(SESSION_KEY)
-    storage.remove(TEMP_SESSION_KEY)
-
-    // Revoke server-side. The token is read from storage before it is cleared so
-    // the request still carries an Authorization header; failure is non-fatal
-    // because the local session is already gone.
-    if (session?.token) {
-      void apiFetch('/auth/logout', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.token}` },
-        body: JSON.stringify(refreshToken ? { refreshToken } : {}),
-      }).catch(() => undefined)
-    }
+    clearAdminSession()
+    // The HttpOnly refresh cookie revokes this session; browser state is dropped
+    // immediately even if the network request cannot reach the API.
+    void apiFetch('/admin/auth/logout', { method: 'POST' }).catch(() => undefined)
   },
 
   persist(session: AdminSession, remember: boolean): void {
-    if (remember) {
-      storage.set(SESSION_KEY, session)
-      storage.remove(TEMP_SESSION_KEY)
-    } else {
-      storage.set(TEMP_SESSION_KEY, session)
-    }
+    persistAdminSession(session, remember)
   },
 
   /** Restores session from temp (non-remembered) or persistent storage. */
   session(): AdminSession | null {
-    const temp = storage.get<AdminSession | null>(TEMP_SESSION_KEY, null)
-    if (temp) return temp
-    return storage.get<AdminSession | null>(SESSION_KEY, null)
+    return readAdminSession()
   },
 
   isAuthenticated(): boolean {
@@ -218,13 +200,25 @@ export const adminAuthService = {
    * Returns the refreshed session, or null when the token is no longer usable.
    */
   async validateSession(options?: RequestOptions): Promise<AdminSession | null> {
-    const session = this.session()
-    if (!session?.token) return null
+    let session = this.session()
+    if (!session) return null
 
     try {
+      // Access tokens are memory-only. After a reload, restore one from the
+      // HttpOnly admin refresh cookie before asking the server for permissions.
+      if (!getAdminAccessToken()) {
+        const restored = await refreshAdminSession()
+        if (!restored) {
+          // The refresh helper clears persisted identity only on a definitive
+          // 401/403. Keep it through network, timeout, 429 and 5xx failures.
+          return this.session()
+        }
+        session = this.session() ?? session
+      }
+
       const me = await apiFetch<AdminMeResponse>(
         '/admin/auth/me',
-        { method: 'GET', headers: { Authorization: `Bearer ${session.token}` } },
+        { method: 'GET' },
         options
       )
 
@@ -237,8 +231,15 @@ export const adminAuthService = {
 
       // Re-derive permissions on every restore. Keeping the stale copy from login
       // would let a revoked grant keep rendering privileged controls.
+      //
+      // The tokens are re-read from storage, not copied from `session`: the
+      // transport rotates an expired access token during the `/me` call above, and
+      // persisting the pre-call copy would write the expired token straight back
+      // and re-arm the 15-minute logout.
       const refreshed: AdminSession = {
         ...session,
+        token: getAdminAccessToken() ?? session.token,
+        refreshToken: undefined,
         id: me.id ?? session.id,
         name: me.name || session.name,
         email: me.email || session.email,
@@ -248,9 +249,16 @@ export const adminAuthService = {
 
       this.persist(refreshed, session.remember)
       return refreshed
-    } catch {
-      this.logout()
-      return null
+    } catch (error) {
+      // Only a definitive credential rejection (401/403) ends the session. An
+      // aborted probe (component unmount / navigation) or a transient network or
+      // timeout failure must leave the stored session and token untouched —
+      // otherwise a momentary outage or a route change signs the operator out.
+      if (error instanceof ServiceError && (error.code === '401' || error.code === '403')) {
+        this.logout()
+        return null
+      }
+      return session
     }
   },
 
@@ -291,8 +299,7 @@ export const adminAuthService = {
     )
 
     // Every refresh-token session was revoked server-side, including this one.
-    storage.remove(SESSION_KEY)
-    storage.remove(TEMP_SESSION_KEY)
+    clearAdminSession()
   },
 
   /**

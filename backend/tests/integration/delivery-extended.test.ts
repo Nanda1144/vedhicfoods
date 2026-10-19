@@ -504,7 +504,7 @@ describe('Delivery Management — Extended State Machine', () => {
   // 9. CUSTOMER OWNERSHIP & AUDIT
   // -------------------------------------------------------------------------
   describe('9. Customer ownership & audit trail', () => {
-    it('lets the owner track their delivery but forbids other customers (403)', async () => {
+    it('lets the owner track their delivery but masks it from other customers (404)', async () => {
       const { orderNumber } = await createOrder(pMain, 1)
 
       const own = await request(app)
@@ -516,7 +516,13 @@ describe('Delivery Management — Extended State Machine', () => {
       const other = await request(app)
         .get(`/api/v1/orders/${orderNumber}/delivery`)
         .set('Authorization', `Bearer ${otherCustomerToken}`)
-      expect(other.status).toBe(403)
+
+      // Anti-enumeration: ownership failures return the same 404 as a missing
+      // order, so the caller cannot confirm the order exists.
+      expect(other.status).toBe(404)
+      expect(other.body.success).toBe(false)
+      expect(other.body.error).toMatch(/not found/i)
+      expect(other.body.data).toBeUndefined()
     })
 
     it('records assignment and status-change audit entries', async () => {

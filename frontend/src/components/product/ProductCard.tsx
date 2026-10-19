@@ -4,7 +4,6 @@ import { cn } from '@/utils/cn'
 import { formatCurrency } from '@/utils/format'
 import { stockStatus } from '@/utils/product'
 import { useCart } from '@/context'
-import { productService } from '@/services/productService'
 import type { Product } from '@/types'
 import { Badge, PriceDisplay, Rating, SmartImage, IconButton, Icon } from '../common'
 import { badgesFor } from '@/utils/product'
@@ -23,7 +22,7 @@ export function ProductCard({ product, priority = false, className, onAdd }: Pro
   const [quickView, setQuickView] = useState(false)
   const badges = badgesFor(product)
   const status = stockStatus(product.stock)
-  const category = productService.category(product.categorySlug)
+  const categoryName = product.categoryName
 
   const handleAdd = () => {
     if (onAdd === null) return
@@ -77,7 +76,7 @@ export function ProductCard({ product, priority = false, className, onAdd }: Pro
       </div>
 
       <div className="product-card__body">
-        {category && <Link to={`/shop?category=${category.slug}`} className="product-card__category">{category.name}</Link>}
+        {categoryName && <Link to={`/shop?category=${product.categorySlug}`} className="product-card__category">{categoryName}</Link>}
         <h3 className="product-card__name">
           <Link to={`/product/${product.slug}`}>{product.name}</Link>
         </h3>

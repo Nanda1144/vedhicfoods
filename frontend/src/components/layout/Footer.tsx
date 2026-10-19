@@ -1,8 +1,10 @@
 import { Link } from 'react-router-dom'
 import { FOOTER_NAV } from '@/data/navigation'
-import { TRUST_BADGES } from '@/config/site'
+import { SITE, TRUST_BADGES } from '@/config/site'
 import { useSettings } from '@/context'
 import { Icon, Logo, type IconName } from '../common'
+
+const CURRENT_YEAR = new Date().getFullYear()
 
 const SOCIAL_ICONS: Record<string, IconName> = {
   instagram: 'instagram',
@@ -14,7 +16,6 @@ const SOCIAL_ICONS: Record<string, IconName> = {
 
 export function Footer() {
   const { settings } = useSettings()
-  const year = new Date().getFullYear()
 
   const groups = Object.values(FOOTER_NAV)
 
@@ -47,7 +48,7 @@ export function Footer() {
             <ul className="footer__contact">
               <li>
                 <Icon name="phone" size={16} />
-                <a href={`tel:+91${settings.supportPhone.replace(/\s/g, '')}`}>{settings.supportPhone}</a>
+                <a href={`tel:${settings.supportPhone.replace(/[^\d+]/g, '')}`}>{settings.supportPhone}</a>
               </li>
               <li>
                 <Icon name="mail" size={16} />
@@ -79,10 +80,10 @@ export function Footer() {
 
       <div className="footer__legal">
         <div className="container footer__legal-inner">
-          <p>© {year} {settings.brandName}. All rights reserved · FSSAI Lic. 10024031000123</p>
+          <p>© {CURRENT_YEAR} {settings.brandName}. All rights reserved · FSSAI Lic. {SITE.fssaiLicense}</p>
           <div className="cluster cluster-3">
             {settings.socials.map((social) => (
-              <a key={social.platform} href={social.href} className="footer__social" aria-label={social.label} target="_blank" rel="noreferrer">
+              <a key={social.platform} href={social.href} className="footer__social" aria-label={social.label} target="_blank" rel="noopener noreferrer">
                 <Icon name={SOCIAL_ICONS[social.platform] ?? 'external'} size={16} />
               </a>
             ))}

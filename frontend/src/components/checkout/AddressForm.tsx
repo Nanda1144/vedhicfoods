@@ -1,48 +1,5 @@
 import { Input, Select } from '../common/form'
-import { isEmail, isPhoneIN, isPincode, required, validate } from '@/utils/validators'
-import type { ValidationResult } from '@/utils/validators'
-
-export const INDIAN_STATES = [
-  'Andhra Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Delhi', 'Goa', 'Gujarat',
-  'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh',
-  'Maharashtra', 'Odisha', 'Punjab', 'Rajasthan', 'Tamil Nadu', 'Telangana',
-  'Uttar Pradesh', 'Uttarakhand', 'West Bengal',
-] as const
-
-export interface AddressFormData {
-  fullName: string
-  email: string
-  phone: string
-  line1: string
-  line2: string
-  pincode: string
-  city: string
-  state: string
-}
-
-export function emptyAddress(): AddressFormData {
-  return { fullName: '', email: '', phone: '', line1: '', line2: '', pincode: '', city: '', state: '' }
-}
-
-export function validateAddressFields(
-  value: AddressFormData,
-  options: { requireEmail?: boolean } = {},
-): Partial<Record<keyof AddressFormData, string>> {
-  const errors: Partial<Record<keyof AddressFormData, string>> = {}
-  const set = (key: keyof AddressFormData, result: ValidationResult) => {
-    if (!result.valid) errors[key] = result.error
-  }
-
-  set('fullName', validate(required(value.fullName, 'Full name')))
-  set('phone', validate(required(value.phone, 'Mobile number'), isPhoneIN(value.phone)))
-  set('line1', validate(required(value.line1, 'Address line 1')))
-  set('pincode', validate(required(value.pincode, 'PIN code'), isPincode(value.pincode)))
-  set('city', validate(required(value.city, 'City')))
-  set('state', validate(required(value.state, 'State')))
-  if (options.requireEmail) set('email', validate(required(value.email, 'Email'), isEmail(value.email)))
-
-  return errors
-}
+import { INDIAN_STATES, type AddressFormData } from './addressFormData'
 
 interface AddressFormProps {
   value: AddressFormData
@@ -67,6 +24,7 @@ export function AddressForm({ value, onChange, errors = {}, title, requiredField
         <div className="grid grid--2">
           <Input
             label="Full name"
+            maxLength={100}
             value={value.fullName}
             onChange={(event) => onChange({ fullName: event.target.value })}
             error={errors.fullName}
@@ -76,6 +34,7 @@ export function AddressForm({ value, onChange, errors = {}, title, requiredField
           <Input
             label="Mobile number"
             type="tel"
+            maxLength={15}
             placeholder="10-digit mobile"
             value={value.phone}
             onChange={(event) => onChange({ phone: event.target.value })}
@@ -89,6 +48,7 @@ export function AddressForm({ value, onChange, errors = {}, title, requiredField
         <Input
           label="Email address"
           type="email"
+          maxLength={254}
           value={value.email}
           onChange={(event) => onChange({ email: event.target.value })}
           error={errors.email}
@@ -99,6 +59,7 @@ export function AddressForm({ value, onChange, errors = {}, title, requiredField
       {show('line1') && (
         <Input
           label="Flat, house no., building, street"
+          maxLength={200}
           value={value.line1}
           onChange={(event) => onChange({ line1: event.target.value })}
           error={errors.line1}
@@ -109,6 +70,7 @@ export function AddressForm({ value, onChange, errors = {}, title, requiredField
       {show('line2') && (
         <Input
           label="Area, landmark (optional)"
+          maxLength={200}
           value={value.line2}
           onChange={(event) => onChange({ line2: event.target.value })}
           autoComplete="address-line2"
@@ -119,6 +81,7 @@ export function AddressForm({ value, onChange, errors = {}, title, requiredField
           {show('city') && (
             <Input
               label="City"
+              maxLength={100}
               value={value.city}
               onChange={(event) => onChange({ city: event.target.value })}
               error={errors.city}

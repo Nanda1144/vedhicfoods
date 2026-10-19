@@ -52,11 +52,12 @@ payment down. See `PRODUCTION_RUNBOOK.md` §6.2.
 
 ## CloudWatch (`scripts/create-cloudwatch.ps1`)
 
-The task definition sets `awslogs-create-group: true`, but the execution role grants no
-`logs:CreateLogGroup` — so if the group does not exist, the agent's create call is
-denied and the task logs to nothing. The script creates the group and sets a 30-day
-retention in one step (a group created by `awslogs-create-group` alone defaults to
-"never expire", which is a cost and, for order/payment data, a policy failure).
+The task definition sets `awslogs-create-group: true` and the execution role grants
+`logs:CreateLogGroup` on the backend log group, so a missing group no longer blocks
+logging. The script still creates the group and sets a 30-day retention in one step — a
+group created by `awslogs-create-group` alone defaults to "never expire", which is a
+cost and, for order/payment data, a policy failure — so prefer running it before the
+first deploy.
 
 ## What GitHub needs before a workflow can deploy
 

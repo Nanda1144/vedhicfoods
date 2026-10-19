@@ -9,6 +9,8 @@ import { InvoiceEmailService } from './invoice-email.service'
 
 export interface InvoiceListParams {
   userId?: string
+  /** Restricts anonymous order-access tokens to the single order they authorize. */
+  orderId?: string
   status?: InvoiceStatus
   page?: number
   limit?: number
@@ -217,15 +219,18 @@ export class InvoiceService {
       },
     })
 
-    // Update order status to CONFIRMED if still PENDING_PAYMENT
-    if (order.status === OrderStatus.PENDING_PAYMENT) {
-      await prisma.order.update({
-        where: { id: order.id },
-        data: {
-          status: OrderStatus.CONFIRMED,
-        },
-      })
-    }
+    // Link the invoice back onto the order (so `order.invoiceId` resolves for
+    // order-success/invoice lookups) and promote the order to CONFIRMED if it is
+    // still awaiting payment capture.
+    await prisma.order.update({
+      where: { id: order.id },
+      data: {
+        invoiceId: invoice.id,
+        ...(order.status === OrderStatus.PENDING_PAYMENT
+          ? { status: OrderStatus.CONFIRMED }
+          : {}),
+      },
+    })
 
     logger.info({ invoiceId: invoice.id, invoiceNumber, orderId }, 'Invoice created successfully')
 
@@ -329,6 +334,7 @@ export class InvoiceService {
   public static async listInvoices(params: InvoiceListParams): Promise<PaginatedInvoices> {
     const {
       userId,
+      orderId,
       status,
       page = 1,
       limit = 20,
@@ -341,6 +347,10 @@ export class InvoiceService {
 
     if (userId) {
       where.userId = userId
+    }
+
+    if (orderId) {
+      where.orderId = orderId
     }
 
     if (status) {
@@ -421,6 +431,39 @@ export class InvoiceService {
 
     // Generate presigned URL (1 hour expiry)
     return S3Service.generatePresignedDownloadUrl(invoice.s3PdfKey, 3600)
+  }
+
+  /**
+   * Builds the invoice PDF in memory and returns the bytes.
+   *
+   * Used to stream the document straight from the API (see the
+   * `/invoices/:id/pdf` route). This keeps invoice downloads working even when
+   * object storage is unavailable — the dev/test S3 fallback only returns a URL
+   * to a bucket that does not exist locally, which surfaced as an S3
+   * `NoSuchBucket` XML page in the browser instead of the PDF.
+   */
+  public static async getInvoicePdf(
+    invoiceId: string
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const invoice = await prisma.invoice.findFirst({
+      where: { OR: [{ id: invoiceId }, { invoiceNumber: invoiceId }] },
+      include: {
+        order: {
+          include: {
+            items: true,
+          },
+        },
+      },
+    })
+
+    if (!invoice) {
+      throw new AppError('Invoice not found', HTTP_STATUS.NOT_FOUND, ERROR_CODES.NOT_FOUND)
+    }
+
+    const invoiceData = this.buildInvoiceData(invoice.order, invoice.invoiceNumber)
+    const buffer = await InvoiceGenerator.generateA4Pdf(invoiceData)
+
+    return { buffer, filename: `${invoice.invoiceNumber}.pdf` }
   }
 
   /**

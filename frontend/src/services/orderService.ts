@@ -40,6 +40,12 @@ export interface PlaceOrderInput {
   paymentMethod: PaymentMethod
   couponCode?: string
   notes?: string
+  /**
+   * Stable per-checkout-attempt key. The backend returns the existing order for
+   * a repeated key instead of creating a duplicate order + inventory
+   * reservation, so a retry after a flaky payment step is safe.
+   */
+  idempotencyKey: string
 }
 
 export interface CheckoutResult {
@@ -92,6 +98,7 @@ export const orderService = {
       paymentMethod: input.paymentMethod,
       couponCode: input.couponCode || null,
       notes: input.notes || null,
+      idempotencyKey: input.idempotencyKey,
     }
 
     return apiFetch<CheckoutResult>(
@@ -147,6 +154,23 @@ export const orderService = {
     return apiFetch(
       `/orders/${encodeURIComponent(orderId)}/cancel`,
       { method: 'POST', body: JSON.stringify({ reason: reason || 'Order cancelled by customer' }) },
+      { ...options, orderToken: options?.orderToken ?? orderTokenFor(orderId) },
+    )
+  },
+
+  /**
+   * Marks a pending online payment as failed and releases its reserved stock.
+   * Called when the customer abandons/ closes the Razorpay modal, which emits no
+   * gateway webhook — without this the reservation would be held indefinitely.
+   */
+  async failPayment(
+    orderId: string,
+    reason: string,
+    options?: RequestOptions,
+  ): Promise<{ message: string }> {
+    return apiFetch(
+      `/orders/${encodeURIComponent(orderId)}/fail-payment`,
+      { method: 'POST', body: JSON.stringify({ reason }) },
       { ...options, orderToken: options?.orderToken ?? orderTokenFor(orderId) },
     )
   },

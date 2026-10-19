@@ -4,6 +4,7 @@ import { AppError } from '../utils/errors'
 import { HTTP_STATUS, ERROR_CODES } from '../constants'
 import { InvoiceStatus, RoleName } from '@prisma/client'
 import { clampPageNumber, clampPageSize, clampSearchTerm } from '../utils/pagination'
+import { orderAccessTokenMatchesOrder } from '../utils/order-token'
 
 /**
  * Returns true when the authenticated user may act on invoices across the
@@ -91,6 +92,7 @@ export class InvoiceController {
       // a sane default instead of propagating `NaN`.
       const result = await InvoiceService.listInvoices({
         userId: filterUserId,
+        orderId: req.orderAccess?.orderId,
         status: status as InvoiceStatus | undefined,
         page: clampPageNumber(page, 1),
         limit: clampPageSize(limit, 20),
@@ -133,6 +135,10 @@ export class InvoiceController {
         throw new AppError('Invoice not found', HTTP_STATUS.NOT_FOUND, ERROR_CODES.NOT_FOUND)
       }
 
+      if (!orderAccessTokenMatchesOrder(req.orderAccess, invoice.orderId)) {
+        throw new AppError('This order access token does not match the invoice.', HTTP_STATUS.FORBIDDEN, ERROR_CODES.FORBIDDEN)
+      }
+
       // Authorization: users can only view their own invoices
       if (!admin && invoice.userId !== userId) {
         throw new AppError('Unauthorized to access this invoice', HTTP_STATUS.FORBIDDEN, ERROR_CODES.FORBIDDEN)
@@ -164,6 +170,10 @@ export class InvoiceController {
 
       if (!invoice) {
         throw new AppError('Invoice not found for this order', HTTP_STATUS.NOT_FOUND, ERROR_CODES.NOT_FOUND)
+      }
+
+      if (!orderAccessTokenMatchesOrder(req.orderAccess, invoice.orderId)) {
+        throw new AppError('This order access token does not match the invoice.', HTTP_STATUS.FORBIDDEN, ERROR_CODES.FORBIDDEN)
       }
 
       if (!admin && invoice.userId !== userId) {
@@ -198,6 +208,10 @@ export class InvoiceController {
       throw new AppError('Invoice not found', HTTP_STATUS.NOT_FOUND, ERROR_CODES.NOT_FOUND)
     }
 
+    if (!orderAccessTokenMatchesOrder(req.orderAccess, invoice.orderId)) {
+      throw new AppError('This order access token does not match the invoice.', HTTP_STATUS.FORBIDDEN, ERROR_CODES.FORBIDDEN)
+    }
+
     if (!admin && invoice.userId !== userId) {
       throw new AppError('Unauthorized to access this invoice', HTTP_STATUS.FORBIDDEN, ERROR_CODES.FORBIDDEN)
     }
@@ -223,6 +237,59 @@ export class InvoiceController {
           filename: `${invoice.invoiceNumber}.pdf`,
         },
       })
+    } catch (error) {
+      next(error)
+    }
+  }
+
+  /**
+   * GET /api/invoices/:id/pdf
+   * Streams the generated invoice PDF directly from the API.
+   *
+   * Preferred over the S3 signed URL for in-app "View"/"Download": it does not
+   * depend on object storage being reachable or the bucket existing, which is
+   * what produced a raw S3 `NoSuchBucket` XML response in development.
+   */
+  public static async downloadInvoicePdf(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = param(req, 'id')
+      const userId = req.user?.id
+      if (!userId) {
+        throw new AppError('Authentication required', HTTP_STATUS.UNAUTHORIZED, ERROR_CODES.UNAUTHORIZED)
+      }
+      const admin = canViewAllInvoices(req.user)
+
+      const invoice = await InvoiceService.getInvoiceById(id)
+
+      if (!invoice) {
+        throw new AppError('Invoice not found', HTTP_STATUS.NOT_FOUND, ERROR_CODES.NOT_FOUND)
+      }
+
+      if (!orderAccessTokenMatchesOrder(req.orderAccess, invoice.orderId)) {
+        throw new AppError('This order access token does not match the invoice.', HTTP_STATUS.FORBIDDEN, ERROR_CODES.FORBIDDEN)
+      }
+
+      if (!admin && invoice.userId !== userId) {
+        throw new AppError('Unauthorized to access this invoice', HTTP_STATUS.FORBIDDEN, ERROR_CODES.FORBIDDEN)
+      }
+
+      const { buffer, filename } = await InvoiceService.getInvoicePdf(id)
+
+      try {
+        await (await import('../services/audit.service')).AuditService.record({
+          action: 'INVOICE_DOWNLOADED',
+          entity: 'Invoice',
+          entityId: invoice.id,
+          metadata: { invoiceNumber: invoice.invoiceNumber },
+          req,
+        })
+      } catch {}
+
+      res.setHeader('Content-Type', 'application/pdf')
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+      res.setHeader('Content-Length', String(buffer.length))
+      res.setHeader('Cache-Control', 'private, no-store')
+      res.send(buffer)
     } catch (error) {
       next(error)
     }

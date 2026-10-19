@@ -17,13 +17,12 @@ export function useReveal<T extends HTMLElement = HTMLDivElement>({
   disabled = false,
 }: RevealOptions = {}): { ref: RefObject<T | null>; visible: boolean } {
   const ref = useRef<T | null>(null)
-  const [visible, setVisible] = useState(disabled)
+  const [visible, setVisible] = useState(() => disabled || prefersReducedMotion())
 
   useEffect(() => {
     const element = ref.current
     if (!element) return
     if (disabled || prefersReducedMotion()) {
-      setVisible(true)
       element.classList.add('is-visible')
       return
     }

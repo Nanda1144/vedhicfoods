@@ -30,6 +30,7 @@ router.get('/', InvoiceController.listInvoices)
 router.get('/order/:orderId', InvoiceController.getInvoiceByOrderId)
 router.get('/:id', InvoiceController.getInvoice)
 router.get('/:id/download', InvoiceController.getInvoiceDownloadUrl)
+router.get('/:id/pdf', InvoiceController.downloadInvoicePdf)
 
 // Administrative mutations. `invoices.create` is the permission the RBAC seed
 // actually grants for invoice generation/voiding; OWNER and ADMIN bypass the

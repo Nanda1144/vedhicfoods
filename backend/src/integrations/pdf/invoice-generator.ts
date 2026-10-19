@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit'
+import { BRANDING } from '../../config/branding'
 import { getBrandLogoPng } from './brand-logo'
 
 export interface InvoiceItem {
@@ -44,6 +45,44 @@ const FOOTER_LINE_Y = 740
 const CONTENT_BOTTOM = 716
 const ROW_HEIGHT = 20
 
+function assertClose(label: string, actual: number, expected: number): void {
+  if (!Number.isFinite(actual) || Math.abs(actual - expected) > 0.01) {
+    throw new Error(`Invoice ${label} does not reconcile (expected ${expected.toFixed(2)}, received ${actual}).`)
+  }
+}
+
+function validateInvoiceData(data: InvoiceData): void {
+  const amounts: Array<[string, number]> = [
+    ['subtotal', data.subtotal],
+    ['discount', data.discount],
+    ['shipping', data.shipping],
+    ['tax', data.tax],
+    ['total', data.total],
+  ]
+  for (const [label, amount] of amounts) {
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new Error(`Invoice ${label} must be a finite, non-negative amount.`)
+    }
+  }
+
+  let itemSubtotal = 0
+  for (const item of data.items) {
+    if (
+      !Number.isFinite(item.price) || item.price < 0 ||
+      !Number.isInteger(item.quantity) || item.quantity <= 0 ||
+      !Number.isFinite(item.subtotal) || item.subtotal < 0
+    ) {
+      throw new Error(`Invoice item '${item.name}' has invalid quantity or price data.`)
+    }
+    assertClose(`item subtotal for '${item.name}'`, item.subtotal, Math.round(item.price * item.quantity * 100) / 100)
+    itemSubtotal += item.subtotal
+  }
+
+  assertClose('subtotal', data.subtotal, Math.round(itemSubtotal * 100) / 100)
+  const expectedTotal = Math.round((data.subtotal - data.discount + data.shipping + data.tax) * 100) / 100
+  assertClose('total', data.total, expectedTotal)
+}
+
 const COLORS = {
   primary: '#2C2214',
   accent: '#9E7428',
@@ -65,6 +104,7 @@ export class InvoiceGenerator {
    * never overwritten.
    */
   public static async generateA4Pdf(data: InvoiceData): Promise<Buffer> {
+    validateInvoiceData(data)
     return new Promise((resolve, reject) => {
       try {
         const doc = new PDFDocument({
@@ -123,22 +163,23 @@ export class InvoiceGenerator {
             .fillColor(muted)
             .fontSize(8)
             .font('Helvetica')
-            .text(`Invoice No: ${data.invoiceNumber}  |  Order No: ${data.orderNumber}`, 84, 58)
+            .text(`Invoice No: ${data.invoiceNumber}  |  Order ID: ${data.orderNumber}`, 84, 58)
           doc.strokeColor(border).lineWidth(1).moveTo(MARGIN, 78).lineTo(RIGHT_EDGE, 78).stroke()
         }
 
-        const drawRow = (item: InvoiceItem, atY: number, index: number): void => {
+        const drawRow = (item: InvoiceItem, atY: number, index: number, rowHeight: number): void => {
           const rowBg = index % 2 === 0 ? '#FFFFFF' : rowAlt
-          doc.rect(MARGIN, atY - 4, 515, ROW_HEIGHT).fill(rowBg)
+          doc.rect(MARGIN, atY - 4, 515, rowHeight).fill(rowBg)
+          const cellY = atY + Math.max(0, (rowHeight - 10) / 2)
           doc
             .fillColor(primary)
             .font('Helvetica')
             .fontSize(9)
-            .text(item.name, 48, atY, { width: 235, ellipsis: true })
-            .text(item.unit || 'piece', 290, atY)
-            .text(money(item.price), 355, atY, { align: 'right', width: 58 })
-            .text(String(item.quantity), 425, atY, { align: 'center', width: 30 })
-            .text(money(item.subtotal), 485, atY, { align: 'right', width: 60 })
+            .text(item.name, 48, atY, { width: 235 })
+            .text(item.unit || 'piece', 290, cellY)
+            .text(money(item.price), 355, cellY, { align: 'right', width: 58 })
+            .text(String(item.quantity), 425, cellY, { align: 'center', width: 30 })
+            .text(money(item.subtotal), 485, cellY, { align: 'right', width: 60 })
         }
 
         // -----------------------------------------------------------------
@@ -149,15 +190,15 @@ export class InvoiceGenerator {
           .fillColor(accent)
           .fontSize(22)
           .font('Helvetica-Bold')
-          .text('VEDHIC FOODS', 96, 40)
+          .text(BRANDING.brandName.toUpperCase(), 96, 40)
 
         doc
           .fillColor(muted)
           .fontSize(9)
           .font('Helvetica')
-          .text('Pure Farm-Fresh Millets & Heritage Organic Laddus', 96, 68, { width: 270 })
-          .text('FSSAI Lic. No: 11224333000123 | GSTIN: 29AABCU9603R1ZM', 96, 80, { width: 270 })
-          .text('Bengaluru, Karnataka - 560038 | care@vedhicfoods.com', 96, 92, { width: 270 })
+          .text(BRANDING.tagline, 96, 68, { width: 270 })
+          .text(`FSSAI Lic. No: ${BRANDING.fssaiLicense} | GSTIN: ${BRANDING.gstin}`, 96, 80, { width: 270 })
+          .text(`${BRANDING.address} | ${BRANDING.supportEmail}`, 96, 92, { width: 270 })
 
         doc
           .fillColor(primary)
@@ -170,7 +211,7 @@ export class InvoiceGenerator {
           .fontSize(9)
           .font('Helvetica')
           .text(`Invoice No: ${data.invoiceNumber}`, 380, 66, { align: 'right', width: 175 })
-          .text(`Order No: ${data.orderNumber}`, 380, 78, { align: 'right', width: 175 })
+          .text(`Order ID: ${data.orderNumber}`, 380, 78, { align: 'right', width: 175 })
           .text(`Date: ${data.orderDate}`, 380, 90, { align: 'right', width: 175 })
           .text(
             `Payment: ${data.paymentMethod.toUpperCase()} (${data.paymentStatus.toUpperCase()})`,
@@ -188,35 +229,41 @@ export class InvoiceGenerator {
           .font('Helvetica-Bold')
           .text('BILLED & SHIPPED TO:', MARGIN, 135)
 
-        doc
-          .font('Helvetica')
-          .fontSize(9)
-          .fillColor(primary)
-          .text(data.shippingAddress.fullName || data.customerName, MARGIN, 150)
-          .text(data.shippingAddress.line1, MARGIN, 162)
-          .text(data.shippingAddress.line2 ? `${data.shippingAddress.line2}, ` : '', MARGIN, 174)
-          .text(
-            `${data.shippingAddress.city}, ${data.shippingAddress.state} - ${data.shippingAddress.pincode}`,
-            MARGIN,
-            186
-          )
-          .text(`Phone: ${data.customerPhone || 'N/A'} | Email: ${data.customerEmail}`, MARGIN, 198)
+        doc.font('Helvetica').fontSize(9).fillColor(primary)
+        const addressLines = [
+          data.shippingAddress.fullName || data.customerName,
+          data.shippingAddress.line1,
+          data.shippingAddress.line2,
+          `${data.shippingAddress.city}, ${data.shippingAddress.state} - ${data.shippingAddress.pincode}`,
+          data.shippingAddress.country,
+          `Phone: ${data.customerPhone || 'N/A'} | Email: ${data.customerEmail}`,
+        ].filter((line): line is string => Boolean(line?.trim()))
+        const addressWidth = RIGHT_EDGE - MARGIN
+        let addressY = 150
+        for (const line of addressLines) {
+          doc.text(line, MARGIN, addressY, { width: addressWidth })
+          addressY += doc.heightOfString(line, { width: addressWidth }) + 2
+        }
 
-        doc.strokeColor(border).lineWidth(1).moveTo(MARGIN, 220).lineTo(RIGHT_EDGE, 220).stroke()
+        const invoiceTableStart = Math.max(220, addressY + 8)
+        doc.strokeColor(border).lineWidth(1).moveTo(MARGIN, invoiceTableStart).lineTo(RIGHT_EDGE, invoiceTableStart).stroke()
 
         // -----------------------------------------------------------------
         // Line items (paginated)
         // -----------------------------------------------------------------
-        let y = drawTableHeader(235)
+        let y = drawTableHeader(invoiceTableStart + 15)
 
         data.items.forEach((item, index) => {
-          if (y + ROW_HEIGHT > CONTENT_BOTTOM) {
+          doc.font('Helvetica').fontSize(9)
+          const descriptionHeight = doc.heightOfString(item.name, { width: 235 })
+          const rowHeight = Math.max(ROW_HEIGHT, Math.ceil(descriptionHeight + 8))
+          if (y + rowHeight > CONTENT_BOTTOM) {
             doc.addPage()
             drawContinuationHeader()
             y = drawTableHeader(92)
           }
-          drawRow(item, y, index)
-          y += ROW_HEIGHT
+          drawRow(item, y, index, rowHeight)
+          y += rowHeight
         })
 
         const hasDiscount = data.discount > 0
@@ -297,7 +344,7 @@ export class InvoiceGenerator {
               { align: 'center', width: 515 }
             )
             .text(
-              `For questions contact care@vedhicfoods.com | Page ${i - range.start + 1} of ${totalPages}`,
+              `For questions contact ${BRANDING.supportEmail} | Page ${i - range.start + 1} of ${totalPages}`,
               MARGIN,
               FOOTER_LINE_Y + 34,
               { align: 'center', width: 515 }

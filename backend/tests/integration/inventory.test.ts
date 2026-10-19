@@ -16,6 +16,11 @@ describe('Production Inventory Management Integration Tests', () => {
   let testProductId: string
   let testProductSku: string
   let outOfStockProductId: string
+  let categoryId = ''
+  let customerId = ''
+  let failureOrderId = ''
+  let successOrderId = ''
+  let customerEmail = ''
   const timestamp = Date.now()
 
   // Guest checkout rows persist across runs, so both the email and the phone
@@ -31,14 +36,21 @@ describe('Production Inventory Management Integration Tests', () => {
     })
     adminToken = adminLogin.accessToken
 
+    const category = await prisma.category.create({
+      data: { name: `Inventory Test ${timestamp}`, slug: `inventory-test-${timestamp}` },
+    })
+    categoryId = category.id
+
     // 2. Customer login/register
-    const customerEmail = `inv.customer.${timestamp}@vedhicfoods.com`
+    customerEmail = `inv.customer.${timestamp}@vedhicfoods.com`
     const customerReg = await AuthService.register({
       fullName: 'Inventory Customer',
       email: customerEmail,
       password: 'Customer@Vedhic2026!',
     })
     customerToken = customerReg.accessToken
+    customerId = customerReg.user.id
+    customerEmail = customerReg.user.email
 
     // 3. Unauthorized staff user (has no inventory.read or inventory.update)
     const unauthorizedStaffEmail = `staff.unauth.${timestamp}@vedhicfoods.com`
@@ -69,6 +81,7 @@ describe('Production Inventory Management Integration Tests', () => {
         mrp: 999,
         stock: 25,
         unit: '500ml',
+        categoryId,
         shortDescription: 'Pure traditional cow ghee',
         description: 'Cultured A2 cow ghee prepared via bilona method',
         isOrganic: true,
@@ -87,20 +100,45 @@ describe('Production Inventory Management Integration Tests', () => {
         mrp: 1800,
         stock: 0,
         unit: '50g',
+        categoryId,
         shortDescription: 'Purified mineral resin',
       })
     expect(oosRes.status).toBe(201)
     outOfStockProductId = oosRes.body.id
+
+    const createFixtureOrder = (label: string) => prisma.order.create({
+      data: {
+        orderNumber: `INV-${label}-${timestamp}`,
+        userId: customerId,
+        customerName: 'Inventory Customer',
+        customerEmail,
+        phone: guestPhone(0),
+        subtotal: 100,
+        total: 100,
+      },
+    })
+    failureOrderId = (await createFixtureOrder('FAILURE')).id
+    successOrderId = (await createFixtureOrder('SUCCESS')).id
   }, 45000)
 
   afterAll(async () => {
+    const orderIds = [failureOrderId, successOrderId].filter(Boolean)
+    if (orderIds.length) {
+      await prisma.inventoryLog.deleteMany({ where: { orderId: { in: orderIds } } })
+      await prisma.order.deleteMany({ where: { id: { in: orderIds } } })
+    }
     // Clean up test products
     if (testProductId) {
+      await prisma.inventoryLog.deleteMany({ where: { productId: testProductId } })
+      await prisma.inventory.deleteMany({ where: { productId: testProductId } })
       await prisma.product.deleteMany({ where: { id: testProductId } })
     }
     if (outOfStockProductId) {
+      await prisma.inventoryLog.deleteMany({ where: { productId: outOfStockProductId } })
+      await prisma.inventory.deleteMany({ where: { productId: outOfStockProductId } })
       await prisma.product.deleteMany({ where: { id: outOfStockProductId } })
     }
+    if (categoryId) await prisma.category.deleteMany({ where: { id: categoryId } })
   })
 
   // =========================================================================
@@ -523,7 +561,7 @@ describe('Production Inventory Management Integration Tests', () => {
       // 1. Manually reserve 2 units
       await InventoryService.reserveStock(
         [{ productId: testProductId, quantity: 2 }],
-        { orderId: 'test-fake-payment-order-123', orderNumber: 'VED-TEST-PAY' }
+        { orderId: failureOrderId, orderNumber: `INV-FAILURE-${timestamp}` }
       )
 
       const stockDuring = (await InventoryService.getInventoryByProductId(testProductId)).availableQuantity
@@ -532,7 +570,7 @@ describe('Production Inventory Management Integration Tests', () => {
       // 2. Release reservation (simulating payment failure/cancellation)
       await InventoryService.releaseReservation(
         [{ productId: testProductId, quantity: 2 }],
-        { orderId: 'test-fake-payment-order-123', reason: 'Customer payment gateway timeout' }
+        { orderId: failureOrderId, reason: 'Customer payment gateway timeout' }
       )
 
       const stockAfter = (await InventoryService.getInventoryByProductId(testProductId)).availableQuantity
@@ -545,13 +583,13 @@ describe('Production Inventory Management Integration Tests', () => {
       // 1. Reserve 1 unit
       await InventoryService.reserveStock(
         [{ productId: testProductId, quantity: 1 }],
-        { orderId: 'test-fake-payment-order-456' }
+        { orderId: successOrderId }
       )
 
       // 2. Confirm deduction
       await InventoryService.confirmDeduction(
         [{ productId: testProductId, quantity: 1 }],
-        { orderId: 'test-fake-payment-order-456', reason: 'Captured Razorpay payment' }
+        { orderId: successOrderId, reason: 'Captured Razorpay payment' }
       )
 
       const invAfter = await InventoryService.getInventoryByProductId(testProductId)

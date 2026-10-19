@@ -4,34 +4,42 @@ import path from 'path'
 import { InvoiceGenerator, InvoiceData, InvoiceItem } from '../../src/integrations/pdf/invoice-generator'
 import { inspectPdf, A4_WIDTH, A4_HEIGHT, type PdfTextRun } from '../integration/helpers/pdf-inspect'
 
-const sampleData = (overrides: Partial<InvoiceData> = {}): InvoiceData => ({
-  invoiceNumber: 'INV-2026-000123',
-  orderNumber: 'VF-2026-000456',
-  orderDate: '2026-10-09',
-  customerName: 'Ananya Iyer',
-  customerEmail: 'ananya.iyer@example.com',
-  customerPhone: '9876501234',
-  shippingAddress: {
-    fullName: 'Ananya Iyer',
-    line1: 'No. 42, Mango Grove Layout',
-    line2: 'Indiranagar 2nd Stage',
-    city: 'Bengaluru',
-    state: 'Karnataka',
-    pincode: '560038',
-    country: 'India',
-  },
-  items: [
+const sampleData = (overrides: Partial<InvoiceData> = {}): InvoiceData => {
+  const items = overrides.items ?? [
     { name: 'Organic Little Millet', sku: 'SKU-MILLET-01', unit: '500g', price: 250, quantity: 4, subtotal: 1000 },
-  ],
-  subtotal: 1000,
-  discount: 100,
-  shipping: 49,
-  tax: 45,
-  total: 994,
-  paymentMethod: 'RAZORPAY',
-  paymentStatus: 'PAID',
-  ...overrides,
-})
+  ]
+  const subtotal = overrides.subtotal ?? items.reduce((sum, item) => sum + item.subtotal, 0)
+  const discount = overrides.discount ?? 100
+  const shipping = overrides.shipping ?? 49
+  const tax = overrides.tax ?? 45
+
+  return {
+    invoiceNumber: 'INV-2026-000123',
+    orderNumber: 'VF-2026-000456',
+    orderDate: '2026-10-09',
+    customerName: 'Ananya Iyer',
+    customerEmail: 'ananya.iyer@example.com',
+    customerPhone: '9876501234',
+    shippingAddress: {
+      fullName: 'Ananya Iyer',
+      line1: 'No. 42, Mango Grove Layout',
+      line2: 'Indiranagar 2nd Stage',
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      pincode: '560038',
+      country: 'India',
+    },
+    items,
+    subtotal,
+    discount,
+    shipping,
+    tax,
+    total: overrides.total ?? Math.round((subtotal - discount + shipping + tax) * 100) / 100,
+    paymentMethod: 'RAZORPAY',
+    paymentStatus: 'PAID',
+    ...overrides,
+  }
+}
 
 function makeItems(count: number): InvoiceItem[] {
   return Array.from({ length: count }, (_, i) => ({
@@ -46,7 +54,11 @@ function makeItems(count: number): InvoiceItem[] {
 
 /** Approximate rendered width of a text run (Helvetica is ~0.5em average). */
 function runBox(run: PdfTextRun): { x1: number; y1: number; x2: number; y2: number } {
-  const width = run.fontSize * 0.5 * run.text.length + 1
+  const estimatedWidth = run.fontSize * 0.5 * run.text.length + 1
+  // Product-description text wraps inside its 235pt table column; its extracted
+  // text operand can contain multiple visual lines, so cap the estimate to the
+  // actual column width before checking neighbouring cells.
+  const width = run.x >= 48 && run.x < 290 ? Math.min(235, estimatedWidth) : estimatedWidth
   const height = run.fontSize
   return { x1: run.x, y1: run.y, x2: run.x + width, y2: run.y + height }
 }
@@ -110,6 +122,8 @@ describe('InvoiceGenerator A4 PDF', () => {
     expect(text).toContain('9876501234')
     expect(text).toContain('No. 42, Mango Grove Layout')
     expect(text).toContain('Bengaluru, Karnataka - 560038')
+    expect(text).toContain('India')
+    expect(text).toContain('Order ID: VF-2026-000456')
 
     // Payment
     expect(text).toContain('RAZORPAY')
@@ -138,7 +152,7 @@ describe('InvoiceGenerator A4 PDF', () => {
     expect(withDiscount.allText).toContain('Discount:')
 
     const withoutDiscount = inspectPdf(
-      await InvoiceGenerator.generateA4Pdf(sampleData({ discount: 0, total: 1094 }))
+      await InvoiceGenerator.generateA4Pdf(sampleData({ discount: 0, shipping: 0 }))
     )
     expect(withoutDiscount.allText).not.toContain('Discount:')
     expect(withoutDiscount.allText).toContain('Delivery Charges:')
@@ -190,13 +204,63 @@ describe('InvoiceGenerator A4 PDF', () => {
     }
   })
 
+  it('wraps long product names and long addresses without truncation or overlap', async () => {
+    const longProductName = 'Organic Heritage Millet Laddu with Cold Pressed A2 Ghee and Traditional Dry Fruits '.repeat(2).trim()
+    const data = sampleData({
+      items: [{ name: longProductName, sku: 'LONG-1', unit: '500g', price: 250, quantity: 2, subtotal: 500 }],
+      subtotal: 500,
+      shipping: 49,
+      discount: 25,
+      tax: 24,
+      total: 548,
+      shippingAddress: {
+        fullName: 'Ananya Iyer',
+        line1: 'Apartment 1408, Tower C, Green Valley Residency, Outer Ring Road, Near Central Business District, Bengaluru, Karnataka',
+        line2: 'Fourth Main Road, Indiranagar Extension, Opposite Heritage Park, Landmark: Old Post Office Building',
+        city: 'Bengaluru Urban District',
+        state: 'Karnataka',
+        pincode: '560038',
+        country: 'India',
+      },
+    })
+    const insp = inspectPdf(await InvoiceGenerator.generateA4Pdf(data))
+    const compactText = insp.allText.replace(/\s+/g, '')
+
+    expect(compactText).toContain(longProductName.replace(/\s+/g, ''))
+    expect(insp.allText).toContain('Opposite Heritage Park')
+    for (const page of insp.pages) expect(significantOverlaps(page.runs)).toEqual([])
+  })
+
+  it('renders ten products and checks a large order total from its line items', async () => {
+    const items = makeItems(10).map((item) => ({ ...item, price: 12500, quantity: 4, subtotal: 50000 }))
+    const subtotal = items.reduce((sum, item) => sum + item.subtotal, 0)
+    const data = sampleData({
+      items,
+      subtotal,
+      discount: 25000,
+      shipping: 0,
+      tax: 24750,
+      total: 499750,
+    })
+    const insp = inspectPdf(await InvoiceGenerator.generateA4Pdf(data))
+
+    expect(insp.pageCount).toBe(1)
+    expect(insp.allText).toContain('Rs. 499750.00')
+    for (const item of items) expect(insp.allText).toContain(item.name)
+  })
+
+  it('rejects incorrect line or invoice totals rather than printing inconsistent amounts', async () => {
+    await expect(InvoiceGenerator.generateA4Pdf(sampleData({ total: 1 }))).rejects.toThrow(/total does not reconcile/)
+    await expect(InvoiceGenerator.generateA4Pdf(sampleData({ subtotal: 999 }))).rejects.toThrow(/subtotal does not reconcile/)
+  })
+
   it('writes real, openable sample invoices to disk for manual inspection', async () => {
     const outDir = path.resolve(process.cwd(), 'tests', 'output', 'invoices')
     fs.mkdirSync(outDir, { recursive: true })
 
     const cases: Array<[string, InvoiceData]> = [
       ['sample-single.pdf', sampleData()],
-      ['sample-no-discount-free-shipping.pdf', sampleData({ discount: 0, shipping: 0, total: 1095 })],
+      ['sample-no-discount-free-shipping.pdf', sampleData({ discount: 0, shipping: 0, total: 1045 })],
       ['sample-many-items.pdf', sampleData({ items: makeItems(60) })],
     ]
 

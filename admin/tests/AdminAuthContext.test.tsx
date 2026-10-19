@@ -113,7 +113,7 @@ describe('AdminAuthProvider session restoration', () => {
     expect(seen.at(-1)?.session).toBeTruthy()
   })
 
-  it('clears loading when validation rejects', async () => {
+  it('preserves the session when validation fails during a transient outage', async () => {
     authService.session.mockReturnValue(SESSION)
     authService.validateSession.mockRejectedValue(new Error('network down'))
 
@@ -121,9 +121,10 @@ describe('AdminAuthProvider session restoration', () => {
     await act(async () => {})
 
     expect(seen.at(-1)?.loading).toBe(false)
-    // A half-trusted credential must never survive a failed check.
-    expect(seen.at(-1)?.session).toBeNull()
-    expect(authService.logout).toHaveBeenCalled()
+    // The API still enforces permissions; a network failure must not discard
+    // the refresh-cookie session before the service can be reached again.
+    expect(seen.at(-1)?.session).toEqual(SESSION)
+    expect(authService.logout).not.toHaveBeenCalled()
   })
 
   it('clears loading when the server downgrades the session to null', async () => {

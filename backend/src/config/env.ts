@@ -131,6 +131,16 @@ const envSchema = z.object({
   AWS_ACCESS_KEY_ID: z.string().optional(),
   AWS_SECRET_ACCESS_KEY: z.string().optional(),
   AWS_S3_BUCKET: z.string().default('vedhifoods-media-dev'),
+  // Public base URL that object keys are served from. In production the media
+  // bucket is private behind CloudFront (OAC), so the raw
+  // `{bucket}.s3.{region}.amazonaws.com` URL returns 403. Set this to the
+  // distribution origin, e.g. `https://cdn.vedhicfoods.com` (no trailing slash).
+  // When unset, the direct S3 virtual-hosted URL is used, which is what local
+  // development and a public-read bucket expect.
+  AWS_S3_PUBLIC_BASE_URL: z.preprocess(
+    v => (v === '' ? undefined : v),
+    z.string().url().optional()
+  ),
 
   // Razorpay configuration
   RAZORPAY_KEY_ID: z.string().default('rzp_test_placeholder_key'),
@@ -284,6 +294,25 @@ if (validatedEnv.NODE_ENV === 'production') {
         `${name} still holds the placeholder value published in .env.example — ` +
           'generate a unique secret (e.g. `openssl rand -base64 48`) and store it in ' +
           'AWS Secrets Manager or SSM Parameter Store'
+      )
+      return
+    }
+
+    // Catch the templated `REPLACE_ME_*` values shipped in
+    // .env.production.example. Those are longer than the minimum lengths above
+    // (e.g. REPLACE_ME_PRODUCTION_JWT_SECRET_...) so they would otherwise pass
+    // the length check and boot a production process with a value that is
+    // published in this repository.
+    const lowered = value.toLowerCase()
+    if (
+      lowered.includes('replace_me') ||
+      lowered.includes('placeholder') ||
+      lowered.includes('changeme') ||
+      lowered.includes('change_me')
+    ) {
+      offenders.push(
+        `${name} still contains a template placeholder — supply the real value ` +
+          'from AWS Secrets Manager or SSM Parameter Store'
       )
     }
   }

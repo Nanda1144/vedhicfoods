@@ -173,6 +173,17 @@
   color: var(--color-text-muted);
 }
 
+/*
+ * The topbar's right-hand cluster (realtime badge, role badge, avatar, sign out)
+ * is wider than a 320px viewport once the realtime badge reads "Reconnecting".
+ * Let it wrap and shrink instead of pushing the page into horizontal scroll.
+ */
+.admin__topbar-actions {
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .admin__content {
   flex: 1;
   display: flex;
@@ -437,6 +448,13 @@
   align-items: center;
   gap: var(--space-3);
   margin-left: auto;
+}
+
+@media (max-width: 480px) {
+  .admin-page-header__actions {
+    flex-wrap: wrap;
+    margin-left: 0;
+  }
 }
 
 /* Admin headings are always left-aligned (boss requirement) */
@@ -1559,6 +1577,17 @@
   align-items: center;
 }
 
+@media (max-width: 480px) {
+  .pagination-bar {
+    flex-wrap: wrap;
+  }
+
+  .pagination-bar__controls {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}
+
 .pagination-bar__page {
   min-width: 30px;
   height: 30px;
@@ -1937,7 +1966,7 @@
 
 .promo-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
   gap: var(--space-4);
 }
 

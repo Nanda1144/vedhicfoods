@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { DEFAULT_PRODUCT_FILTERS, type ProductFilters, type ProductSortKey } from '@/types'
 import { productService } from '@/services/productService'
 import { useAsync, useDebounce, useMediaQuery } from '@/hooks'
 import { BREAKPOINTS, PRODUCT_GRID_DEFAULT_PAGE_SIZE, SORT_OPTIONS } from '@/constants'
 import type { Crumb } from '@/components/common'
-import { PageHeader, ProductGridSkeleton, Pagination, EmptyShopState, Icon, IconButton, Drawer } from '@/components/common'
+import { PageHeader, ProductGridSkeleton, Pagination, EmptyShopState, ErrorState, Icon, IconButton, Drawer } from '@/components/common'
 import { FilterPanel, ProductGrid } from '@/components/product'
 
 const serialise = (filters: ProductFilters) =>
   JSON.stringify({
+    query: filters.query,
     categories: filters.categories,
     tags: filters.tags,
     minPrice: filters.minPrice,
@@ -23,7 +24,7 @@ const serialise = (filters: ProductFilters) =>
 export function ShopPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const categoryParam = searchParams.get('category') ?? ''
-  const qParam = searchParams.get('q') ?? ''
+  const qParam = searchParams.get('q') ?? searchParams.get('query') ?? ''
   const pageParam = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10) || 1)
 
   const [filters, setFilters] = useState<ProductFilters>(() => ({
@@ -32,23 +33,29 @@ export function ShopPage() {
     query: qParam,
   }))
   const debouncedQuery = useDebounce(filters.query, 260)
+  const paramKey = `${categoryParam}|${qParam}`
+  const [syncedParams, setSyncedParams] = useState(paramKey)
 
-  useEffect(() => {
+  // Keep filters in sync with the URL (render-time state adjustment rather
+  // than an effect so search/category deep-links resolve without an extra pass).
+  if (syncedParams !== paramKey) {
+    setSyncedParams(paramKey)
     setFilters((current) => ({
       ...current,
       categories: categoryParam ? [categoryParam] : current.categories,
       query: qParam,
     }))
-  }, [categoryParam, qParam])
+  }
 
   const isDesktop = useMediaQuery(`(min-width: ${BREAKPOINTS.lg}px)`)
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false)
 
   const signature = serialise({ ...filters, query: debouncedQuery })
+  const [reloadKey, setReloadKey] = useState(0)
   const result = useAsync(
     () =>
       productService.list({ ...filters, query: debouncedQuery }, { page: pageParam, perPage: PRODUCT_GRID_DEFAULT_PAGE_SIZE }),
-    [signature, pageParam],
+    [signature, pageParam, reloadKey],
   )
 
   const updateFilters = (patch: Partial<ProductFilters>) => {
@@ -160,10 +167,10 @@ export function ShopPage() {
               {result.loading ? (
                 <ProductGridSkeleton count={PRODUCT_GRID_DEFAULT_PAGE_SIZE} />
               ) : result.error ? (
-                <EmptyShopState
+                <ErrorState
                   title="We couldn't load this selection"
                   description={result.error.message}
-                  reset={resetFilters}
+                  onRetry={() => setReloadKey((key) => key + 1)}
                 />
               ) : result.data && result.data.items.length > 0 ? (
                 <ProductGrid products={result.data.items} />

@@ -29,19 +29,35 @@ export class AuditService {
    */
   private static sanitizePayload(data?: Record<string, any>): Record<string, any> {
     if (!data) return {}
-    const sensitiveKeys = ['password', 'passwordHash', 'token', 'refreshToken', 'secret', 'keySecret', 'webhookSecret']
-    const clean: Record<string, any> = {}
 
-    for (const [key, val] of Object.entries(data)) {
-      if (sensitiveKeys.some(s => key.toLowerCase().includes(s.toLowerCase()))) {
-        clean[key] = '[REDACTED]'
-      } else if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-        clean[key] = this.sanitizePayload(val)
-      } else {
-        clean[key] = val
-      }
+    const isSensitiveKey = (key: string): boolean => {
+      const normalized = key.replace(/[^a-z0-9]/gi, '').toLowerCase()
+      return [
+        'password',
+        'passwd',
+        'secret',
+        'token',
+        'credential',
+        'apikey',
+        'accesskey',
+        'privatekey',
+        'authorization',
+        'cookie',
+      ].some((fragment) => normalized.includes(fragment))
     }
-    return clean
+
+    const visit = (value: any): any => {
+      if (Array.isArray(value)) return value.map(visit)
+      if (value === null || typeof value !== 'object') return value
+
+      const clean: Record<string, any> = {}
+      for (const [key, nested] of Object.entries(value)) {
+        clean[key] = isSensitiveKey(key) ? '[REDACTED]' : visit(nested)
+      }
+      return clean
+    }
+
+    return visit(data)
   }
 
   /**

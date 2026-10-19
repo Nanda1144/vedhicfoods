@@ -102,6 +102,23 @@ export function createApp(): Express {
   // 3. Environment-based CORS Configuration
   const allowedOrigins = buildAllowedOrigins()
 
+  // Admin auth rotates an HttpOnly cookie into a JavaScript-readable access
+  // token. Keep the admin origin boundary in front of CORS so a sibling
+  // storefront origin cannot read even a rejected admin refresh response.
+  app.use((req, res, next) => {
+    if (!/^\/api\/v1\/admin\/auth\/(?:login|refresh|logout)$/.test(req.path)) return next()
+    const origin = req.get('Origin')
+    if (!origin) return next()
+
+    const adminOrigin = String(env.ADMIN_FRONTEND_URL || '').trim().replace(/\/$/, '')
+    const localAdminOrigins = env.NODE_ENV === 'production'
+      ? []
+      : ['http://localhost:5174', 'http://127.0.0.1:5174']
+    if (origin === adminOrigin || localAdminOrigins.includes(origin)) return next()
+
+    return res.status(403).json({ error: 'Request origin is not allowed.' })
+  })
+
   app.use(
     cors({
       origin: (origin, callback) => {
@@ -132,6 +149,10 @@ export function createApp(): Express {
         // (`x-session-token`). Omitting it fails the browser preflight, so the
         // storefront cannot add to / read the cart at all.
         'X-Session-Token',
+        // Guest order/invoice access: set by the storefront on the order-success
+        // and invoice pages (`x-order-token`). Omitting it fails the browser
+        // preflight, so guests cannot read their own order or invoice.
+        'X-Order-Token',
       ],
       exposedHeaders: ['X-Request-ID', 'RateLimit', 'RateLimit-Policy', 'X-Idempotent-Replay'],
       maxAge: 600,

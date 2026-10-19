@@ -27,6 +27,7 @@ describe('Inventory — Extended Lifecycle, Concurrency & Audit', () => {
   let restrictedStaffToken: string
   let customerToken: string
   let customerEmail: string
+  let categoryId = ''
   const createdProductIds: string[] = []
 
   const createProduct = async (label: string, stock: number): Promise<string> => {
@@ -40,6 +41,7 @@ describe('Inventory — Extended Lifecycle, Concurrency & Audit', () => {
         mrp: 120,
         stock,
         unit: 'piece',
+        categoryId,
         shortDescription: `Extended inventory fixture ${label}`,
       })
     if (res.status !== 201) {
@@ -103,6 +105,11 @@ describe('Inventory — Extended Lifecycle, Concurrency & Audit', () => {
       await AuthService.login({ email: restrictedEmail, password: 'Staff@Vedhic2026!' })
     ).accessToken
 
+    const category = await prisma.category.create({
+      data: { name: `Inv Ext Cat ${ts}`, slug: `inv-ext-cat-${ts}` },
+    })
+    categoryId = category.id
+
     pLife = await createProduct('LIFE', 20)
     pEdge = await createProduct('EDGE', 10)
     pRes = await createProduct('RES', 50)
@@ -123,11 +130,7 @@ describe('Inventory — Extended Lifecycle, Concurrency & Audit', () => {
         price: 100,
         mrp: 120,
         stock: 7,
-        categoryId: (
-          await prisma.category.create({
-            data: { name: `Inv Ext Cat ${ts}`, slug: `inv-ext-cat-${ts}` },
-          })
-        ).id,
+        categoryId,
       },
     })
     pSelfHeal = orphan.id
@@ -136,8 +139,11 @@ describe('Inventory — Extended Lifecycle, Concurrency & Audit', () => {
 
   afterAll(async () => {
     if (createdProductIds.length > 0) {
+      await prisma.inventoryLog.deleteMany({ where: { productId: { in: createdProductIds } } })
+      await prisma.inventory.deleteMany({ where: { productId: { in: createdProductIds } } })
       await prisma.product.deleteMany({ where: { id: { in: createdProductIds } } })
     }
+    if (categoryId) await prisma.category.deleteMany({ where: { id: categoryId } })
   }, 60000)
 
   // =========================================================================

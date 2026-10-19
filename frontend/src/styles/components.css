@@ -903,8 +903,8 @@
 .qty__btn {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border: 0;
   background: transparent;
   color: var(--color-text);
@@ -928,8 +928,8 @@
 }
 
 .qty--sm .qty__btn {
-  width: 30px;
-  height: 30px;
+  width: 40px;
+  height: 40px;
 }
 
 .qty--sm .qty__value {
@@ -1210,7 +1210,7 @@
 }
 
 .page-header__back {
-  margin-bottom: var(--space-5);
+  margin-bottom: 0;
   margin-left: calc(var(--space-1) * -1);
   background: var(--color-background-alt);
   color: var(--color-text);
@@ -1249,16 +1249,14 @@
   gap: var(--space-4);
 }
 
-.page-header--center {
-  text-align: center;
+.page-header__title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
 }
 
-.page-header--center .page-header__desc {
-  margin-inline: auto;
-}
-
-.page-header--center .page-header__meta {
-  justify-content: center;
+.page-header--center .page-header__title-row {
+  justify-content: flex-start;
 }
 
 /* --- State ---------------------------------------------------------------- */

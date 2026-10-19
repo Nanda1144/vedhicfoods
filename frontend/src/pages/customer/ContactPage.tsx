@@ -47,6 +47,12 @@ export function ContactPage() {
       setTicketId(result.ticketId)
       push({ title: 'Message sent', description: `Reference ${result.ticketId} — we reply within 24 hours.` })
       setForm(EMPTY)
+    } catch (caught) {
+      push({
+        title: 'Message could not be sent',
+        description: caught instanceof Error ? caught.message : 'Please try again, or email us directly.',
+        tone: 'danger',
+      })
     } finally {
       setBusy(false)
     }
@@ -90,8 +96,15 @@ export function ContactPage() {
                   </span>
                 </>
               )
+              const isExternal = card.href?.startsWith('http') ?? false
               return card.href ? (
-                <a key={card.title} href={card.href} className="contact-card">
+                <a
+                  key={card.title}
+                  href={card.href}
+                  className="contact-card"
+                  target={isExternal ? '_blank' : undefined}
+                  rel={isExternal ? 'noopener noreferrer' : undefined}
+                >
                   {inner}
                 </a>
               ) : (
@@ -106,7 +119,6 @@ export function ContactPage() {
             <Icon name="map-pin" size={22} />
             <strong>{settings.addressLine}, {settings.city}</strong>
             <span>Pincode {settings.pincode}</span>
-            <span className="contact-map__hint">Map view replaces this placeholder on go-live</span>
           </div>
 
           <div className="contact-form-wrap">

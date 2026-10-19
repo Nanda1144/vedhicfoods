@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation, Navigate } from 'react-router-dom'
 import { cn } from '@/utils/cn'
 import { ADMIN_NAV } from '@/data/adminNavigation'
@@ -7,6 +7,7 @@ import type { IconName } from '../common'
 import { useSettings, useToast } from '@/context'
 import { useRealtime } from '@/hooks'
 import type { RealtimeEvent } from '@/services/realtimeService'
+import { publishRealtime } from '@/services/realtimeBus'
 import { initials } from '@/utils/format'
 import { AdminAuthProvider, useAdminAuth } from '@/context/AdminAuthContext'
 
@@ -41,29 +42,64 @@ const BOTTOM_LINKS: { href: string; icon: IconName; label: string; end?: boolean
   { href: '/admin/settings', icon: 'sliders', label: 'Settings' },
 ]
 
+/**
+ * Realtime toast guards. A burst of identical events (a retried webhook, or two
+ * channels describing one status change) must not stack duplicate toasts, and a
+ * genuine flood of orders must not bury the screen: at most `TOAST_LIMIT` realtime
+ * toasts are shown per `TOAST_WINDOW_MS`. Refreshes are unaffected — they are
+ * coalesced separately by `useRealtimeEvents`.
+ */
+const TOAST_WINDOW_MS = 4_000
+const TOAST_LIMIT = 4
+
 function AdminShell() {
   const navigate = useNavigate()
   const location = useLocation()
   const { settings } = useSettings()
   const { push } = useToast()
-  const { session, can, logout, loading } = useAdminAuth()
+  const { session, can, logout, loading, sessionExpired } = useAdminAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const recentToasts = useRef<Map<string, number>>(new Map())
 
   // Live updates: new orders and customer notifications surface as toasts
-  // without a manual refresh. Self-triggered order updates are suppressed (the
-  // payload carries the actor id) so staff do not get toasted for their own
-  // clicks.
+  // without a manual refresh, and every event is republished so the mounted page
+  // (orders list, dashboard) can refetch. Self-triggered order updates are
+  // suppressed from the toast side (the payload carries the actor id) so staff do
+  // not get toasted for their own clicks — but they are still published, since a
+  // page that is open should still reconcile.
   const realtimeStatus = useRealtime(session?.token ?? null, (event: RealtimeEvent) => {
+    publishRealtime(event)
+
+    const now = Date.now()
+    for (const [key, at] of recentToasts.current) {
+      if (now - at > TOAST_WINDOW_MS) recentToasts.current.delete(key)
+    }
+
+    const announce = (key: string, draft: Parameters<typeof push>[0]) => {
+      if (recentToasts.current.has(key)) return
+      if (recentToasts.current.size >= TOAST_LIMIT) return
+      recentToasts.current.set(key, now)
+      push(draft)
+    }
+
     if (event.channel === 'order.created') {
       const data = event.data as { orderNumber?: string } | null
-      push({ title: 'New order received', description: data?.orderNumber ?? 'A new order was placed.' })
+      announce(`created:${data?.orderNumber ?? ''}`, {
+        title: 'New order received',
+        description: data?.orderNumber ?? 'A new order was placed.',
+      })
     } else if (event.channel === 'order.updated') {
       const data = event.data as { orderNumber?: string; status?: string; actorId?: string } | null
       if (data?.actorId && data.actorId === session?.id) return
-      push({ title: 'Order updated', description: data?.orderNumber ? `${data.orderNumber} → ${data.status}` : 'An order status changed.' })
+      announce(`updated:${data?.orderNumber ?? ''}:${data?.status ?? ''}`, {
+        title: 'Order updated',
+        description: data?.orderNumber ? `${data.orderNumber} → ${data.status}` : 'An order status changed.',
+      })
     } else if (event.channel === 'notification.created') {
-      const data = event.data as { title?: string } | null
-      push({ title: data?.title ?? 'New notification' })
+      const data = event.data as { id?: string; title?: string } | null
+      announce(`notification:${data?.id ?? data?.title ?? ''}`, {
+        title: data?.title ?? 'New notification',
+      })
     }
   })
 
@@ -106,7 +142,7 @@ function AdminShell() {
   }
 
   if (!session) {
-    return <Navigate to="/admin/login" replace />
+    return <Navigate to="/admin/login" replace state={{ from: location.pathname, expired: sessionExpired }} />
   }
 
   const signOut = () => {
@@ -152,7 +188,7 @@ function AdminShell() {
               <p className="admin__brandline">{settings.brandName} · Admin</p>
             </div>
           </div>
-          <div className="row" style={{ gap: 12 }}>
+          <div className="row admin__topbar-actions" style={{ gap: 12 }}>
             {realtimeStatus !== 'idle' && (
               <Badge tone={realtimeStatus === 'open' ? 'success' : realtimeStatus === 'error' ? 'danger' : 'neutral'} dot>
                 {realtimeStatus === 'open' ? 'Live' : realtimeStatus === 'error' ? 'Reconnecting' : 'Connecting'}

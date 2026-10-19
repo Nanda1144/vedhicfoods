@@ -47,7 +47,13 @@ export function useAsync<T>(
 
   useEffect(() => {
     mounted.current = true
-    if (!lazy) void run()
+    if (!lazy) {
+      void run().catch(() => {
+        // Swallow: the effect cannot throw and awaiting callers already got the
+        // rejection. Unhandled rejections here were the "unhandled promise" the
+        // console logged during session restoration/StrictMode.
+      })
+    }
     return () => {
       mounted.current = false
     }

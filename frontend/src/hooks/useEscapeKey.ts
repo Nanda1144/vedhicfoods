@@ -21,9 +21,11 @@ export function useFocusFirst<T extends HTMLElement = HTMLElement>(
 ): void {
   useEffect(() => {
     if (!active || !containerRef.current) return
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const focusable = containerRef.current.querySelector<HTMLElement>(
       'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
     )
     focusable?.focus()
+    return () => previouslyFocused?.focus()
   }, [active, containerRef])
 }

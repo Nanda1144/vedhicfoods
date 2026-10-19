@@ -1,13 +1,14 @@
 import type { PaymentMethod } from '@/types'
 import { Radio, type IconName } from '../common'
 
-export const PAYMENT_METHODS: Array<{
+const PAYMENT_METHODS: Array<{
   id: PaymentMethod
   label: string
   description: string
   icon: IconName
 }> = [
   { id: 'razorpay', label: 'Razorpay — UPI / Card / Netbanking', description: 'Pay securely via UPI, credit/debit cards, netbanking or wallets', icon: 'wallet' },
+  { id: 'cod', label: 'Cash on Delivery', description: 'Pay in cash when your order is delivered', icon: 'rupee' },
 ]
 
 interface PaymentMethodSelectorProps {

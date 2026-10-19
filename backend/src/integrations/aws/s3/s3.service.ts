@@ -161,6 +161,8 @@ export class S3Service {
    * tracking or SSRF-adjacent vector.
    */
   public static buildPublicUrl(s3Key: string): string {
+    const base = env.AWS_S3_PUBLIC_BASE_URL?.replace(/\/+$/, '')
+    if (base) return `${base}/${s3Key}`
     return `https://${this.bucketName}.s3.${env.AWS_REGION}.amazonaws.com/${s3Key}`
   }
 
@@ -237,7 +239,7 @@ export class S3Service {
     options: S3UploadOptions,
     kind: 'image' | 'document'
   ): Promise<string> {
-    const fileUrl = `https://${this.bucketName}.s3.${env.AWS_REGION}.amazonaws.com/${options.key}`
+    const fileUrl = this.buildPublicUrl(options.key)
     const label = kind === 'image' ? 'image' : 'document'
 
     try {
@@ -289,7 +291,7 @@ export class S3Service {
     this.validateImage(contentType, declaredSizeBytes)
 
     const s3Key = this.generateProductImageKey(productId, contentType)
-    const fileUrl = `https://${this.bucketName}.s3.${env.AWS_REGION}.amazonaws.com/${s3Key}`
+    const fileUrl = this.buildPublicUrl(s3Key)
 
     try {
       const command = new PutObjectCommand({
@@ -304,7 +306,7 @@ export class S3Service {
       if (env.NODE_ENV !== 'production') {
         // Return simulated direct upload URL for development/test
         return {
-          uploadUrl: `https://${this.bucketName}.s3.${env.AWS_REGION}.amazonaws.com/${s3Key}?simulated=true`,
+          uploadUrl: `${this.buildPublicUrl(s3Key)}?simulated=true`,
           fileUrl,
           s3Key,
         }
@@ -436,7 +438,7 @@ export class S3Service {
     } catch (error: any) {
       if (env.NODE_ENV !== 'production') {
         // Return simulated download URL for development/test
-        return `https://${this.bucketName}.s3.${env.AWS_REGION}.amazonaws.com/${s3Key}?simulated=true`
+        return `${this.buildPublicUrl(s3Key)}?simulated=true`
       }
       logger.error({ error: error.message, s3Key }, 'Failed to generate pre-signed download URL')
       throw new Error('Failed to generate secure download credentials.')

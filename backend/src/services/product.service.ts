@@ -3,8 +3,14 @@ import { Prisma, ProductStatus, InventoryStatus } from '@prisma/client'
 import { prisma } from '../config/database'
 import { logger } from '../config/logger'
 import { AuditService } from './audit.service'
-import { BadRequestError, ConflictError, NotFoundError } from '../utils/errors'
+import { BadRequestError, ConflictError, NotFoundError, ServiceUnavailableError } from '../utils/errors'
 import { S3Service } from '../integrations/aws/s3/s3.service'
+import { withCache, CACHE_TTL_SECONDS } from '../utils/cache'
+import {
+  invalidateCatalogCaches,
+  productDetailCacheKey,
+  productListCacheKey,
+} from '../utils/catalog-cache'
 import {
   CreateProductInput,
   UpdateProductInput,
@@ -130,10 +136,28 @@ export class ProductService {
 
   /**
    * List products with search, filtering, sorting, and pagination.
+   *
+   * Public (storefront) reads are cached for a few seconds. Admin reads are
+   * never cached: they include internal inventory/soft-delete fields and are not
+   * shared between visitors. `withCache` falls straight through to the database
+   * whenever the cache is disabled or unavailable.
    */
   public static async listProducts(query: ProductQueryInput, isAdmin = false) {
+    if (isAdmin) {
+      return this.listProductsUncached(query, isAdmin)
+    }
+
+    const key = productListCacheKey(query as unknown as Record<string, unknown>, false)
+    return withCache(key, CACHE_TTL_SECONDS.productList, () => this.listProductsUncached(query, false))
+  }
+
+  /**
+   * Uncached catalog listing. The cache wrapper above is the only entry point
+   * for callers; this carries the query construction and the ranked-search path.
+   */
+  private static async listProductsUncached(query: ProductQueryInput, isAdmin = false) {
     const page = Math.max(1, query.page || 1)
-    const limit = Math.min(100, Math.max(1, query.limit || query.per_page || 20))
+    const limit = Math.min(100, Math.max(1, query.per_page ?? query.limit ?? 20))
     const search = (query.q || query.search)?.trim()
     const categoryFilter = (query.category || query.category_slug)?.trim()
     const minPrice = query.minPrice ?? query.min_price
@@ -168,16 +192,9 @@ export class ProductService {
       }
     }
 
-    // Full text / keyword search (Prisma parameterized, SQL injection safe)
-    if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { shortDescription: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } },
-        { sku: { contains: search, mode: 'insensitive' } },
-        { tags: { has: search.toLowerCase() } },
-      ]
-    }
+    // Free-text search is handled separately below via PostgreSQL full-text
+    // search over the generated `search_vector` column (ranked by relevance).
+    // Every other filter still flows through the Prisma `where` built here.
 
     // Tag filter
     if (tag) {
@@ -267,6 +284,13 @@ export class ProductService {
         break
     }
 
+    // A free-text term is ranked by relevance, which Prisma's `orderBy` cannot
+    // express, so it takes the dedicated full-text path. Everything else uses
+    // the normal counted/filtered listing.
+    if (search) {
+      return this.searchProductsRanked(search, where, page, limit, isAdmin)
+    }
+
     const total = await prisma.product.count({ where })
     const products = await prisma.product.findMany({
       where,
@@ -296,9 +320,127 @@ export class ProductService {
   }
 
   /**
+   * Ranked full-text product search.
+   *
+   * Uses PostgreSQL's `search_vector` generated column (migration
+   * 20261014000000_product_full_text_search) and `websearch_to_tsquery`, which
+   * parses the visitor's term safely — quotes, `or` and `-` are understood and
+   * no raw operator syntax is interpolated. The match is parameterised, so it is
+   * SQL-injection safe.
+   *
+   * Relevance ordering cannot be expressed through Prisma's `orderBy`, so the
+   * ranked ids come from a raw query and the non-search filters are then applied
+   * through the same Prisma `where` as the normal listing (soft-delete, active,
+   * status, category, price, stock, flags, multi-tag). All of that filtering is
+   * done by PostgreSQL against the ranked id set; only the current page's rows
+   * are materialised, and the final order is the relevance order.
+   *
+   * The behaviour when `search` is empty is unchanged: callers take the normal
+   * path above.
+   */
+  private static async searchProductsRanked(
+    search: string,
+    where: any,
+    page: number,
+    limit: number,
+    isAdmin: boolean,
+  ) {
+    const ranked = await prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT "id"
+      FROM "products"
+      WHERE "search_vector" @@ websearch_to_tsquery('english', ${search})
+      ORDER BY ts_rank("search_vector", websearch_to_tsquery('english', ${search})) DESC,
+               "id" ASC
+    `
+
+    const rankedIds = ranked.map((row) => row.id)
+
+    const emptyPage = {
+      items: [] as any[],
+      page,
+      limit,
+      per_page: limit,
+      total: 0,
+      totalPages: 0,
+      total_pages: 0,
+    }
+
+    if (rankedIds.length === 0) {
+      return emptyPage
+    }
+
+    // Apply every non-search filter through the same `where`, keeping only ids
+    // to avoid loading full rows for candidates not on this page.
+    const allowed = await prisma.product.findMany({
+      where: { ...where, id: { in: rankedIds } },
+      select: { id: true },
+    })
+    const allowedIds = new Set(allowed.map((p) => p.id))
+    const filteredIds = rankedIds.filter((id) => allowedIds.has(id))
+    const total = filteredIds.length
+
+    const skip = (page - 1) * limit
+    const pageIds = filteredIds.slice(skip, skip + limit)
+
+    if (pageIds.length === 0) {
+      return {
+        items: [] as any[],
+        page,
+        limit,
+        per_page: limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+        total_pages: Math.ceil(total / limit),
+      }
+    }
+
+    const products = await prisma.product.findMany({
+      where: { id: { in: pageIds } },
+      include: {
+        category: true,
+        images: {
+          orderBy: [{ isPrimary: 'desc' }, { displayOrder: 'asc' }],
+        },
+        inventory: true,
+      },
+    })
+
+    // `findMany` returns rows in database order, not the ranked order, so the
+    // page is re-sequenced from `pageIds`.
+    const byId = new Map(products.map((p) => [p.id, p]))
+    const items = pageIds
+      .map((id) => byId.get(id))
+      .filter((p): p is NonNullable<typeof p> => Boolean(p))
+      .map((p) => (isAdmin ? this.formatAdminProduct(p) : this.formatPublicProduct(p)))
+
+    return {
+      items,
+      page,
+      limit,
+      per_page: limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      total_pages: Math.ceil(total / limit),
+    }
+  }
+
+  /**
    * Get single product by ID or Slug.
+   *
+   * Public detail reads are cached; admin reads are not (they expose internal
+   * inventory and soft-delete state). A miss or an unavailable cache falls
+   * through to the database.
    */
   public static async getProduct(idOrSlug: string, isAdmin = false) {
+    if (isAdmin) {
+      return this.getProductUncached(idOrSlug, true)
+    }
+
+    const key = productDetailCacheKey(idOrSlug, false)
+    return withCache(key, CACHE_TTL_SECONDS.productDetail, () => this.getProductUncached(idOrSlug, false))
+  }
+
+  private static async getProductUncached(idOrSlug: string, isAdmin = false) {
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrSlug)
 
     const where: any = {
@@ -518,6 +660,10 @@ export class ProductService {
       req,
     })
 
+    // The public catalogue lists/details are now stale; drop them. No-op when
+    // caching is disabled.
+    await invalidateCatalogCaches()
+
     logger.info({ productId: createdProduct!.id, sku: createdProduct!.sku }, 'Product created successfully')
     return this.formatAdminProduct(createdProduct)
   }
@@ -586,9 +732,15 @@ export class ProductService {
     }
 
     const priceChanged = !proposedPrice.equals(existing.price) || !proposedMrp.equals(existing.mrp)
+    // An explicit discount always wins. Otherwise the discount is only derived
+    // from mrp - price when the money actually moved: an unrelated edit (name,
+    // stock, images, ...) must not silently discard a discount the operator set
+    // by hand and replace it with the list-price difference.
     const proposedDiscount = data.discount !== undefined
       ? new Prisma.Decimal(data.discount)
-      : proposedMrp.minus(proposedPrice)
+      : priceChanged
+        ? proposedMrp.minus(proposedPrice)
+        : existing.discount
 
     // 5. Stock & Inventory Synchronization
     const newStock = data.stock !== undefined ? data.stock : existing.stock
@@ -596,6 +748,15 @@ export class ProductService {
 
     // Backward compatibility for `active` boolean
     const isActive = data.isActive !== undefined ? data.isActive : data.active !== undefined ? data.active : existing.isActive
+
+    // Verify and canonicalise a supplied gallery *before* the destructive
+    // delete-all/recreate below. Object-form entries carrying an `s3Key` go
+    // through the same verification as `addImage` — the key must resolve to an
+    // object under this product's prefix, and `imageUrl` is recomputed from the
+    // verified key rather than trusting the supplied URL. Verification failures
+    // are caller errors and surface as a 400.
+    const resolvedImages =
+      data.images === undefined ? undefined : await this.resolveGalleryImages(existing.id, data.images)
 
     const updated = await prisma.$transaction(async (tx) => {
       const prod = await tx.product.update({
@@ -676,6 +837,31 @@ export class ProductService {
         prod.inventory = invRecord
       }
 
+      // Sync gallery images when the caller supplied an `images` array. Without
+      // this, an admin edit of the primary/gallery images was silently dropped:
+      // `data.images` was validated then never written.
+      if (resolvedImages !== undefined) {
+        await tx.productImage.deleteMany({ where: { productId: existing.id } })
+
+        if (resolvedImages.length > 0) {
+          await tx.productImage.createMany({
+            data: resolvedImages.map((img, index: number) => ({
+              productId: existing.id,
+              imageUrl: img.imageUrl,
+              s3Key: img.s3Key,
+              altText: img.altText,
+              displayOrder: img.displayOrder ?? index,
+              isPrimary: img.isPrimary ?? index === 0,
+            })),
+          })
+        }
+
+        prod.images = await tx.productImage.findMany({
+          where: { productId: existing.id },
+          orderBy: [{ isPrimary: 'desc' }, { displayOrder: 'asc' }],
+        })
+      }
+
       return prod
     }, { timeout: 25000, maxWait: 20000 })
 
@@ -705,6 +891,8 @@ export class ProductService {
       },
       req,
     })
+
+    await invalidateCatalogCaches()
 
     logger.info({ productId: updated.id, name: updated.name }, 'Product updated successfully')
     return this.formatAdminProduct(updated)
@@ -757,6 +945,8 @@ export class ProductService {
       req,
     })
 
+    await invalidateCatalogCaches()
+
     logger.info(
       { productId: existing.id, historicalOrders: historicalOrderCount },
       'Product archived / soft-deleted successfully'
@@ -789,6 +979,67 @@ export class ProductService {
     }
 
     return S3Service.generatePresignedUploadUrl(productId, data.contentType, data.sizeBytes)
+  }
+
+  /**
+   * Resolves a validated `images` payload into rows ready for insertion.
+   *
+   * String entries are direct URLs with no backing object and are stored as-is,
+   * matching `createProduct`. Object entries carrying an `s3Key` are verified
+   * exactly like `addImage` (key must belong to this product, real bytes must
+   * match the declared image type) and `imageUrl` is recomputed from the
+   * verified key rather than trusting the supplied URL — otherwise an admin
+   * could point a gallery row at an arbitrary external origin while presenting
+   * a valid-looking key. Verification failures are caller errors (400).
+   */
+  private static async resolveGalleryImages(
+    productId: string,
+    images: NonNullable<UpdateProductInput['images']>
+  ) {
+    const resolved: Array<{
+      imageUrl: string
+      s3Key?: string
+      altText?: string
+      isPrimary?: boolean
+      displayOrder?: number
+    }> = []
+
+    for (const img of images) {
+      if (typeof img === 'string') {
+        resolved.push({ imageUrl: img })
+        continue
+      }
+
+      const s3Key = img.s3Key?.trim()
+      if (!s3Key) {
+        resolved.push({
+          imageUrl: img.imageUrl,
+          s3Key: undefined,
+          altText: img.altText,
+          isPrimary: img.isPrimary,
+          displayOrder: img.displayOrder,
+        })
+        continue
+      }
+
+      try {
+        await S3Service.verifyUploadedObject(s3Key, { expectedProductId: productId })
+      } catch (error) {
+        throw new BadRequestError(
+          error instanceof Error ? error.message : 'Uploaded image could not be verified.'
+        )
+      }
+
+      resolved.push({
+        imageUrl: S3Service.buildPublicUrl(s3Key),
+        s3Key,
+        altText: img.altText,
+        isPrimary: img.isPrimary,
+        displayOrder: img.displayOrder,
+      })
+    }
+
+    return resolved
   }
 
   /**
@@ -844,6 +1095,10 @@ export class ProductService {
         expectedProductId: productId,
       })
     } catch (error) {
+      const removed = await S3Service.deleteFile(s3Key).catch(() => false)
+      if (!removed) {
+        logger.error({ productId, s3Key }, 'Failed to clean up an unverified product image upload')
+      }
       throw new BadRequestError(
         error instanceof Error ? error.message : 'Uploaded image could not be verified.'
       )
@@ -855,25 +1110,43 @@ export class ProductService {
     const shouldBePrimary = data.isPrimary || product.images.length === 0
     const displayOrder = data.displayOrder ?? product.images.length
 
-    const createdImage = await prisma.$transaction(async (tx) => {
-      if (shouldBePrimary) {
-        await tx.productImage.updateMany({
-          where: { productId },
-          data: { isPrimary: false },
+    let createdImage
+    try {
+      createdImage = await prisma.$transaction(async (tx) => {
+        if (shouldBePrimary) {
+          await tx.productImage.updateMany({
+            where: { productId },
+            data: { isPrimary: false },
+          })
+        }
+
+        return tx.productImage.create({
+          data: {
+            productId,
+            imageUrl,
+            s3Key,
+            altText: data.altText,
+            isPrimary: shouldBePrimary,
+            displayOrder,
+          },
         })
+      }, { timeout: 25000, maxWait: 20000 })
+    } catch (error) {
+      // The pre-check above is only a fast path: two concurrent attaches of the
+      // same key both read the gallery before either inserts, so the unique
+      // index on (productId, s3Key) is what actually decides the winner. The
+      // loser must NOT delete the object here — it is still referenced by the
+      // winning row — so map the conflict to 409 before the compensation path.
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictError('This image has already been attached to the product.')
       }
 
-      return tx.productImage.create({
-        data: {
-          productId,
-          imageUrl,
-          s3Key,
-          altText: data.altText,
-          isPrimary: shouldBePrimary,
-          displayOrder,
-        },
-      })
-    }, { timeout: 25000, maxWait: 20000 })
+      const removed = await S3Service.deleteFile(s3Key).catch(() => false)
+      if (!removed) {
+        logger.error({ productId, s3Key }, 'Failed to clean up product image after the database attach failed')
+      }
+      throw error
+    }
 
     await AuditService.record({
       action: 'PRODUCT_IMAGE_ADDED',
@@ -883,6 +1156,8 @@ export class ProductService {
       metadata: { productId, imageUrl: createdImage.imageUrl, s3Key: createdImage.s3Key, isPrimary: createdImage.isPrimary },
       req,
     })
+
+    await invalidateCatalogCaches()
 
     return createdImage
   }
@@ -922,6 +1197,8 @@ export class ProductService {
       metadata: { productId, primaryImageId: imageId },
       req,
     })
+
+    await invalidateCatalogCaches()
 
     return prisma.productImage.findMany({
       where: { productId },
@@ -966,6 +1243,8 @@ export class ProductService {
       req,
     })
 
+    await invalidateCatalogCaches()
+
     return prisma.productImage.findMany({
       where: { productId },
       orderBy: [{ isPrimary: 'desc' }, { displayOrder: 'asc' }],
@@ -992,9 +1271,11 @@ export class ProductService {
     // 1. Delete from Amazon S3 if s3Key exists
     if (targetImage.s3Key) {
       try {
-        await S3Service.deleteFile(targetImage.s3Key)
+        const deleted = await S3Service.deleteFile(targetImage.s3Key)
+        if (!deleted) throw new Error('S3 object deletion was not confirmed')
       } catch (err: any) {
-        logger.warn({ error: err.message, s3Key: targetImage.s3Key }, 'S3 file deletion returned error during image delete')
+        logger.error({ error: err.message, s3Key: targetImage.s3Key }, 'S3 deletion failed; preserving the product image record')
+        throw new ServiceUnavailableError('Image storage is unavailable; the image was not removed. Please retry.')
       }
     }
 
@@ -1027,6 +1308,8 @@ export class ProductService {
       metadata: { productId, imageUrl: targetImage.imageUrl, s3Key: targetImage.s3Key },
       req,
     })
+
+    await invalidateCatalogCaches()
 
     return { success: true, message: 'Image deleted successfully' }
   }

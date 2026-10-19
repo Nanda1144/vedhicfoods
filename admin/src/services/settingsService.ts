@@ -53,6 +53,7 @@ const KEY_MAP: Record<Exclude<keyof WebsiteSettings, 'socials' | 'heroImages'>, 
   heroTitleAccent: 'website_hero_title_accent',
   heroSubtitle: 'website_hero_subtitle',
   heroCtaLabel: 'website_hero_cta_label',
+  storyEnabled: 'website_story_enabled',
 }
 
 function listToMap(items: SettingItem[]): Map<string, unknown> {

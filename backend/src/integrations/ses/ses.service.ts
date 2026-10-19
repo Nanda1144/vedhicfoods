@@ -4,6 +4,7 @@ import {
   SendRawEmailCommand,
   type SESClientConfig,
 } from '@aws-sdk/client-ses'
+import { NodeHttpHandler } from '@smithy/node-http-handler'
 import { env } from '../../config/env'
 import { logger } from '../../config/logger'
 import { AppError } from '../../utils/errors'
@@ -38,13 +39,25 @@ import type {
  */
 let sesClient: SESClient | null = null
 
+const SES_CONNECTION_TIMEOUT_MS = 5_000
+const SES_REQUEST_TIMEOUT_MS = 15_000
+
 function getSesClient(): SESClient {
   if (sesClient) return sesClient
 
   // The region is resolved from AWS_REGION by the SDK's default provider chain;
   // it is only pinned when SES_REGION is set explicitly, so the client follows
   // the task's configured region instead of a hardcoded one.
-  const config: SESClientConfig = {}
+  const config: SESClientConfig = {
+    // Leave retry ownership with EmailQueue. SDK-level retries multiply the
+    // queue's attempts and can make a single mail event take much longer than
+    // its configured backoff budget.
+    maxAttempts: 1,
+    requestHandler: new NodeHttpHandler({
+      connectionTimeout: SES_CONNECTION_TIMEOUT_MS,
+      requestTimeout: SES_REQUEST_TIMEOUT_MS,
+    }),
+  }
   const region = env.SES_REGION || env.AWS_REGION
   if (region) config.region = region
 
@@ -194,7 +207,7 @@ export class SesEmailService implements EmailProvider {
   }
 
   /**
-   * Best-effort send with an attachment. Returns false rather than throwing.
+   * Sends an attachment and preserves SES retry classification on failure.
    *
    * Uses `SendRawEmail` because SES's simple `SendEmail` API has no attachment
    * field: the previous implementation silently dropped the PDF invoice and
@@ -229,7 +242,11 @@ export class SesEmailService implements EmailProvider {
         { error: err?.message, name: err?.name, to: options.toEmail },
         'Exception while calling SES SendRawEmail (attachment)'
       )
-      return false
+      throw new EmailDeliveryError('Email attachment delivery failed', {
+        provider: 'ses',
+        retryable: isRetryableSesError(err),
+        cause: err,
+      })
     }
   }
 }

@@ -27,7 +27,9 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
   useEscapeKey(onClose, open)
   useFocusFirst(panelRef, open)
   useFocusTrap(panelRef, open)
-  const categories = useAsync(() => productService.categories(), [])
+  // Categories are only needed after the panel opens; this component stays
+  // mounted on every storefront route for its focus/scroll behavior.
+  const categories = useAsync(() => productService.categories(), [open], { lazy: !open })
 
   if (!open) return null
 
@@ -74,7 +76,7 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
           <p className="type-caption">{settings.supportPhone} · {settings.supportEmail}</p>
           <div className="cluster cluster-2">
             {settings.socials.map((social) => (
-              <a key={social.platform} href={social.href} className="icon-btn" aria-label={social.label} target={social.href.startsWith('http') ? '_blank' : undefined} rel="noreferrer">
+              <a key={social.platform} href={social.href} className="icon-btn" aria-label={social.label} target={social.href.startsWith('http') ? '_blank' : undefined} rel={social.href.startsWith('http') ? 'noopener noreferrer' : undefined}>
                 <Icon name={PLATFORM_ICON[social.platform] ?? 'external'} size={18} />
               </a>
             ))}

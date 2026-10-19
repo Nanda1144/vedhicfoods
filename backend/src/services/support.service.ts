@@ -719,7 +719,8 @@ export class SupportService {
       await SupportNotificationService.notifyCustomerOfStaffReply({
         ticketId: ticket.id,
         ticketNumber: ticket.ticketNumber,
-        messageId: `close:${ticket.id}:${now.getTime()}`,
+        messageId: null,
+        eventKey: `TICKET_CLOSED:${ticket.id}:${now.getTime()}`,
         subject: ticket.subject,
         message: `This ticket has been closed. Reason: ${input.reason}`,
         staffName: actor.fullName,
@@ -731,7 +732,8 @@ export class SupportService {
       await SupportNotificationService.notifyStaffOfCustomerReply({
         ticketId: ticket.id,
         ticketNumber: ticket.ticketNumber,
-        messageId: `close:${ticket.id}:${now.getTime()}`,
+        messageId: null,
+        eventKey: `TICKET_CLOSED:${ticket.id}:${now.getTime()}`,
         subject: ticket.subject,
         message: `Customer closed this ticket. Reason: ${input.reason}`,
         customerName: actor.fullName,
@@ -1064,7 +1066,8 @@ public static async getStaffOverview(actor: ActorContext) {
       await SupportNotificationService.notifyCustomerOfStaffReply({
         ticketId: ticket.id,
         ticketNumber: ticket.ticketNumber,
-        messageId: `status:${ticket.id}:${now.getTime()}`,
+        messageId: null,
+        eventKey: `TICKET_STATUS:${ticket.id}:${now.getTime()}`,
         subject: ticket.subject,
         message:
           input.status === TicketStatus.WAITING_FOR_CUSTOMER

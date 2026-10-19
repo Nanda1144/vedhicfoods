@@ -357,6 +357,13 @@ Resources:
     DeletionPolicy: Snapshot
     UpdateReplacePolicy: Retain
     Properties:
+      # Pin the identifier. Without this CloudFormation generates a physical id
+      # (e.g. `vedhicfoods-database-abcdefg`), and every RDS CloudWatch alarm and
+      # metric filter in vedhicfoods-monitoring.yaml - which defaults its
+      # DBInstanceIdentifier dimension to `vedhicfoods` - then silently monitors
+      # a resource that does not exist. The log group name below (Ref Database)
+      # resolves to this value too, so the DB-log metric filters line up.
+      DBInstanceIdentifier: vedhicfoods
       DBName: !Ref DatabaseName
       Engine: postgres
       EngineVersion: !Ref DatabaseEngineVersion

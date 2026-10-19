@@ -16,14 +16,8 @@ export interface FaqSectionProps {
   className?: string
 }
 
-export function FaqSection({
-  eyebrow,
-  title,
-  description,
-  align = 'left',
-  limit = 5,
-  className,
-}: FaqSectionProps) {
+/** Renders the CMS-managed FAQ list from `GET /content/faqs`. */
+export function FaqSection({ eyebrow, title, description, align = 'left', limit = 5, className }: FaqSectionProps) {
   const loaded = useAsync(() => contentService.faqs(), [])
 
   return (

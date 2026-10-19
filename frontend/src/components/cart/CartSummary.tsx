@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useCart, useSettings } from '@/context'
 import type { CartTotals } from '@/types'
 import { formatCurrency } from '@/utils/format'
-import { Button, Icon, Spinner } from '../common'
+import { Button, Icon } from '../common'
 
 interface CartSummaryProps {
   totals: CartTotals
@@ -10,9 +10,11 @@ interface CartSummaryProps {
   checkoutLabel?: string
   /** Compact totals without the coupon block (used on the drawer/checkout). */
   minimal?: boolean
+  /** Blocks the checkout action (e.g. unresolved stock issues). */
+  checkoutDisabled?: boolean
 }
 
-export function CartSummary({ totals, onCheckout, checkoutLabel = 'Proceed to checkout', minimal = false }: CartSummaryProps) {
+export function CartSummary({ totals, onCheckout, checkoutLabel = 'Proceed to checkout', minimal = false, checkoutDisabled = false }: CartSummaryProps) {
   const { coupon, applyCoupon, removeCoupon } = useCart()
   const { settings } = useSettings()
   const [couponInput, setCouponInput] = useState('')
@@ -104,7 +106,7 @@ export function CartSummary({ totals, onCheckout, checkoutLabel = 'Proceed to ch
             <div className="coupon-row">
               <input
                 type="text"
-                placeholder="Coupon code (try VEDHIC100)"
+                placeholder="Coupon code"
                 aria-label="Coupon code"
                 value={couponInput}
                 onChange={(event) => setCouponInput(event.target.value.toUpperCase())}
@@ -120,7 +122,7 @@ export function CartSummary({ totals, onCheckout, checkoutLabel = 'Proceed to ch
         </div>
       )}
 
-      <Button fullWidth size="lg" iconRight="arrow-right" onClick={onCheckout}>
+      <Button fullWidth size="lg" iconRight="arrow-right" onClick={onCheckout} disabled={checkoutDisabled}>
         {checkoutLabel}
       </Button>
 
@@ -128,14 +130,5 @@ export function CartSummary({ totals, onCheckout, checkoutLabel = 'Proceed to ch
         <Icon name="lock" size={14} /> Secure payment via Razorpay · GST invoice
       </p>
     </aside>
-  )
-}
-
-export function SummaryLoader() {
-  return (
-    <div className="summary-card summary-card--loading" aria-busy="true">
-      <Spinner size={24} />
-      <p>Calculating your order…</p>
-    </div>
   )
 }

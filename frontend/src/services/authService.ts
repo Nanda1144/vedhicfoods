@@ -103,13 +103,25 @@ export const authService = {
     return apiFetch<AuthProfile>('/auth/me', { method: 'GET' }, options)
   },
 
+  /** Restore an access token from the HttpOnly refresh cookie, then verify it. */
+  async restoreSession(options?: RequestOptions): Promise<AuthProfile> {
+    const refreshed = await apiFetch<{ accessToken?: string; token?: string }>(
+      '/auth/refresh',
+      { method: 'POST' },
+      options,
+    )
+    const accessToken = refreshed?.accessToken || refreshed?.token
+    if (!accessToken) throw new Error('The saved session could not be restored.')
+    tokenStore.setTokens(accessToken)
+    return this.me(options)
+  },
+
   /** Best-effort revocation; local state is cleared regardless of the outcome. */
   async logout(options?: RequestOptions): Promise<void> {
-    const refreshToken = tokenStore.getRefreshToken()
     try {
       await apiFetch(
         '/auth/logout',
-        { method: 'POST', body: JSON.stringify({ refreshToken }) },
+        { method: 'POST' },
         options,
       )
     } catch {

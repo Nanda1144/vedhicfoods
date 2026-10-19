@@ -227,6 +227,8 @@ export interface WebsiteSettings {
   heroCtaLabel: string
   /** Hero background images (URLs or data URLs), cross-faded in order. */
   heroImages: string[]
+  /** Whether the homepage "Our Story" milestones section is shown. */
+  storyEnabled: boolean
 }
 
 export interface SocialLink {

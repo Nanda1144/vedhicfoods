@@ -37,8 +37,9 @@
       {
         "Sid": "WriteExecutionLogs",
         "Effect": "Allow",
-        "Action": ["logs:CreateLogStream", "logs:PutLogEvents"],
-        "Resource": "arn:aws:logs:REPLACE_ME_REGION:REPLACE_ME_ACCOUNT_ID:log-group:vedhicfoods/*"
+        "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+        "Resource": "arn:aws:logs:REPLACE_ME_REGION:REPLACE_ME_ACCOUNT_ID:log-group:vedhicfoods/*",
+        "_Note": "logs:CreateLogGroup is included so the task definition's `awslogs-create-group: true` fallback actually works when the group is missing. It is scoped to the `vedhicfoods/*` prefix, not \"*\". create-cloudwatch.ps1 remains the source of truth for the group and its retention policy."
       }
     ]
   },

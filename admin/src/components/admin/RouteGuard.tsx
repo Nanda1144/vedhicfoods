@@ -11,11 +11,11 @@ import { Icon } from '../common'
  * permission on every API call and return 403 for unauthorized requests.
  */
 export function RequireAdmin({ permission, children }: { permission?: Permission; children: ReactNode }) {
-  const { session, can } = useAdminAuth()
+  const { session, can, sessionExpired } = useAdminAuth()
   const location = useLocation()
 
   if (!session) {
-    return <Navigate to="/admin/login" replace state={{ from: location.pathname }} />
+    return <Navigate to="/admin/login" replace state={{ from: location.pathname, expired: sessionExpired }} />
   }
   if (permission && !can(permission)) {
     return (

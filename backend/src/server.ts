@@ -3,6 +3,7 @@ import { createApp, buildAllowedOrigins } from './app'
 import { env, loadedEnvFiles } from './config/env'
 import { logger } from './config/logger'
 import { checkDatabaseConnection, disconnectDatabase } from './config/database'
+import { closeRealtime } from './events/realtime'
 
 async function bootstrap(): Promise<void> {
   // Names only, never contents. This is what answers "which environment's
@@ -90,7 +91,10 @@ async function bootstrap(): Promise<void> {
         process.exit(1)
       }
 
-      logger.info('HTTP server closed successfully. Disconnecting database...')
+      logger.info('HTTP server closed successfully. Closing realtime hub and disconnecting database...')
+      // Drop SSE connections and drain/close the realtime Redis pub/sub clients
+      // before the process exits, so a rolling deploy does not leak connections.
+      await closeRealtime()
       await disconnectDatabase()
 
       logger.info('Graceful shutdown completed successfully. Exiting process.')

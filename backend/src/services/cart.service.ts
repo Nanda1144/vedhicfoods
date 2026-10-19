@@ -297,7 +297,7 @@ export class CartService {
       })
 
       return CartService.formatCartWithInventory(updatedCart)
-    }, { timeout: 15000, maxWait: 10000 })
+    }, { timeout: 15000, maxWait: 15000 })
   }
 
   /**
@@ -424,7 +424,7 @@ export class CartService {
       })
 
       return CartService.formatCartWithInventory(updatedCart)
-    }, { timeout: 15000, maxWait: 10000 })
+    }, { timeout: 15000, maxWait: 15000 })
   }
 
   /**
@@ -469,7 +469,7 @@ export class CartService {
       })
 
       return CartService.formatCartWithInventory(updatedCart)
-    }, { timeout: 15000, maxWait: 10000 })
+    }, { timeout: 15000, maxWait: 15000 })
   }
 
   /**
@@ -597,7 +597,7 @@ export class CartService {
       // Delete guest cart items and guest cart
       await tx.cartItem.deleteMany({ where: { cartId: guestCart.id } })
       await tx.cart.delete({ where: { id: guestCart.id } }).catch(() => {})
-    })
+    }, { timeout: 15000, maxWait: 15000 })
 
     return this.getCart(userId, null)
   }

@@ -5,6 +5,7 @@ import { logger } from '../config/logger'
 import { sendControllerError } from '../utils/api-response'
 import { AppError } from '../utils/errors'
 import { env } from '../config/env'
+import { clearRefreshCookie, hasTrustedOrigin, readCookie, setRefreshCookie, type RefreshCookieName } from '../utils/auth-cookie'
 import {
   registerSchema,
   loginSchema,
@@ -24,8 +25,14 @@ import {
  * can complete the flow without a live mailbox. They are never echoed in
  * production.
  */
-function exposeTestToken(key: 'verificationToken' | 'resetToken', token?: string): Record<string, string> {
-  if (env.NODE_ENV === 'production' || !token) return {}
+export function exposeTestToken(
+  key: 'verificationToken' | 'resetToken',
+  token?: string,
+  nodeEnvironment: string = env.NODE_ENV
+): Record<string, string> {
+  // Staging can contain real accounts and is often reachable from the internet.
+  // Only an isolated test process may return a bearer token in the API response.
+  if (nodeEnvironment !== 'test' || !token) return {}
   return { [key]: token }
 }
 
@@ -47,13 +54,14 @@ export class AuthController {
       }
 
       const result = await AuthService.register(parsed.data, req)
+      setRefreshCookie(res, 'refreshToken', result.refreshToken)
 
       res.status(201).json({
         success: true,
         message: 'Account registered successfully.',
         user: result.user,
         accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
+        ...(env.NODE_ENV === 'test' ? { refreshToken: result.refreshToken } : {}),
         ...exposeTestToken('verificationToken', result.verificationToken),
       })
     } catch (error: any) {
@@ -83,12 +91,13 @@ export class AuthController {
       }
 
       const result = await AuthService.login(parsed.data, req)
+      setRefreshCookie(res, 'refreshToken', result.refreshToken)
 
       res.status(200).json({
         success: true,
         token: result.accessToken,
         accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
+        ...(env.NODE_ENV === 'test' ? { refreshToken: result.refreshToken } : {}),
         user: {
           id: result.user.id,
           name: result.user.fullName,
@@ -113,20 +122,36 @@ export class AuthController {
    * Rotates refresh tokens and issues a new short-lived access token.
    */
   public static async refresh(req: Request, res: Response): Promise<void> {
+    return AuthController.rotateRefresh(req, res, 'refreshToken')
+  }
+
+  /** Admin console refresh uses a separate cookie so both SPAs can be signed in independently. */
+  public static async refreshAdmin(req: Request, res: Response): Promise<void> {
+    return AuthController.rotateRefresh(req, res, 'adminRefreshToken')
+  }
+
+  private static async rotateRefresh(req: Request, res: Response, cookieName: RefreshCookieName): Promise<void> {
     try {
-      const parsed = refreshTokenSchema.safeParse(req.body)
+      const cookieToken = readCookie(req, cookieName)
+      if (cookieToken && !hasTrustedOrigin(req, cookieName)) {
+        res.status(403).json({ error: 'Request origin is not allowed.' })
+        return
+      }
+      const rawToken = cookieToken ?? req.body?.refreshToken
+      const parsed = refreshTokenSchema.safeParse({ refreshToken: rawToken })
       if (!parsed.success) {
         res.status(400).json({ error: 'Refresh token is required.' })
         return
       }
 
       const result = await AuthService.refreshAccessToken(parsed.data.refreshToken, req)
+      setRefreshCookie(res, cookieName, result.refreshToken)
 
       res.status(200).json({
         success: true,
         accessToken: result.accessToken,
         token: result.accessToken,
-        refreshToken: result.refreshToken,
+        ...(env.NODE_ENV === 'test' ? { refreshToken: result.refreshToken } : {}),
       })
     } catch (error: any) {
       sendControllerError(res, error, 'Unable to refresh your session right now. Please try again later.', req.id)
@@ -138,14 +163,29 @@ export class AuthController {
    * Revokes the active refresh token session.
    */
   public static async logout(req: Request, res: Response): Promise<void> {
+    return AuthController.logoutSession(req, res, 'refreshToken')
+  }
+
+  /** Admin logout clears only the console refresh cookie. */
+  public static async logoutAdmin(req: Request, res: Response): Promise<void> {
+    return AuthController.logoutSession(req, res, 'adminRefreshToken')
+  }
+
+  private static async logoutSession(req: Request, res: Response, cookieName: RefreshCookieName): Promise<void> {
     try {
-      const refreshToken = req.body.refreshToken || (req as any).cookies?.refreshToken
+      const cookieToken = readCookie(req, cookieName)
+      const refreshToken = req.body?.refreshToken || cookieToken
+      if (cookieToken && !hasTrustedOrigin(req, cookieName)) {
+        res.status(403).json({ error: 'Request origin is not allowed.' })
+        return
+      }
       if (refreshToken) {
         await AuthService.logout(refreshToken, req)
       } else if (req.user?.id) {
         await AuthService.logoutAll(req.user.id, req)
       }
 
+      clearRefreshCookie(res, cookieName)
       res.status(200).json({ success: true, message: 'Logged out successfully.' })
     } catch (error: any) {
       logger.error({ error: error.message }, 'Logout error')
@@ -324,12 +364,13 @@ export class AuthController {
       const result = await AuthService.login(parsed.data, req, {
         allowedRoles: [RoleName.OWNER, RoleName.ADMIN, RoleName.STAFF],
       })
+      setRefreshCookie(res, 'adminRefreshToken', result.refreshToken)
 
       res.status(200).json({
         success: true,
         token: result.accessToken,
         accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
+        ...(env.NODE_ENV === 'test' ? { refreshToken: result.refreshToken } : {}),
         user: {
           id: result.user.id,
           name: result.user.fullName,

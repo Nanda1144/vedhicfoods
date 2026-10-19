@@ -25,6 +25,8 @@ const router = Router()
 // SECURITY: this is the only unauthenticated route under `/admin` and it must
 // stay above the router-wide guards below.
 router.post('/auth/login', authRateLimiter, AuthController.adminLogin)
+router.post('/auth/refresh', authRateLimiter, AuthController.refreshAdmin)
+router.post('/auth/logout', authRateLimiter, AuthController.logoutAdmin)
 
 // ============================================================================
 // ADMIN CONSOLE BOUNDARY.

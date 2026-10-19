@@ -221,9 +221,9 @@ presigned URL authorises the request, but the browser still enforces CORS on the
 **response**. Without this rule the upload succeeds server-side and the admin page
 cannot read the result — the image appears to fail while it actually saved.
 
-`backend/infra/s3-cors.json` lists `vedhicfoods.com`, `www.vedhicfoods.com` and
-`admin.vedhicfoods.com` as bare hostnames with **no scheme**; S3 rejects
-`https://…` with `MalformedXML` and the whole call fails.
+`backend/infra/s3-cors.json` lists the storefront, www alias, and admin portal as
+complete HTTPS origins. S3 matches these against the browser's `Origin` header;
+keep the scheme and host in sync with the production frontend URLs.
 
 ```bash
 aws s3api put-bucket-cors \
@@ -699,7 +699,11 @@ generate and validate; and the verification pre-flight.
   ALB would blunt credential-stuffing and injection attempts before they reach the
   rate limiter. The rate limiter is the current control and is per-IP, which is not
   the same thing.
-- **CloudFront `S3Service.buildPublicUrl`** still constructs a direct bucket URL rather
-  than a distribution URL; see `AWS_DEPLOYMENT.md` §4.2.
-- **`admin/src/data/admin.ts` and `frontend/src/data/admin.ts`** still carry
-  `vedhifoods.example` staff seed rows. Sample data only, no DNS dependency.
+- **`S3Service.buildPublicUrl`** constructs a direct bucket URL unless
+  `AWS_S3_PUBLIC_BASE_URL` is set to the CloudFront distribution origin; set it so
+  product images and invoices resolve through the OAC distribution. See
+  `AWS_DEPLOYMENT.md` §4.4.
+- **`admin/src/data/admin.ts`** now holds only the `PERMISSIONS` catalogue (the
+  slugs seeded by `database/seed.ts` and enforced by `requirePermission`). The
+  placeholder staff rows and the former `frontend/src/data/admin.ts` are gone, so
+  the admin console renders no sample operators.

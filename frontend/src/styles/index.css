@@ -1,7 +1,7 @@
 /* ==========================================================================
    Global stylesheet entry — import order matters.
    1. tokens  2. reset  3. base  4. utilities  5. animations
-   6. components  7. layout  8. pages  9. admin
+   6. components  7. layout  8. pages
    ========================================================================== */
 
 @import './tokens.css';
@@ -12,4 +12,3 @@
 @import './components.css';
 @import './layout.css';
 @import './pages.css';
-@import './admin.css';

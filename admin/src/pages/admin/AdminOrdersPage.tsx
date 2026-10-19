@@ -1,10 +1,13 @@
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { adminService } from '@/services/adminService'
+import { invoiceService } from '@/services/invoiceService'
 import { useAdminAuth } from '@/context/AdminAuthContext'
-import { useAsync } from '@/hooks'
+import { useAsync, useRealtimeEvents } from '@/hooks'
 import { useToast } from '@/context'
 import { formatCurrency, formatDate, formatDateTime } from '@/utils/format'
+import { buildGstReportCsv, csvFilename, downloadCsv } from '@/utils/csv'
+import { filterOrders, pageCountFor, paginate } from '@/utils/orderList'
 import { AdminPageHeader, DataTable, StatusPill, AdminToolbar, PaginationBar, ConfirmDialog } from '@/components/admin'
 import type { Column } from '@/components/admin'
 import type { Order, OrderStatus } from '@/types'
@@ -14,6 +17,9 @@ const PAGE_SIZE = 10
 
 const STATUS_FLOW: OrderStatus[] = ['pending', 'confirmed', 'packed', 'shipped', 'out-for-delivery', 'delivered']
 const STATUS_FILTERS: Array<OrderStatus | 'all'> = ['all', ...STATUS_FLOW, 'cancelled']
+
+/** Channels that change the orders table; both new orders and status changes. */
+const ORDER_EVENTS = ['order.created', 'order.updated'] as const
 
 export function AdminOrdersPage() {
   const { id } = useParams()
@@ -35,22 +41,34 @@ function OrderList() {
 
   const { data, loading, error, run } = useAsync(() => adminService.orders(), [])
 
-  const filtered = useMemo(() => {
-    const query = search.trim().toLowerCase()
-    return (data ?? []).filter((order) => {
-      if (
-        query &&
-        !`${order.orderNumber} ${order.customerName} ${order.customerEmail}`.toLowerCase().includes(query)
-      )
-        return false
-      if (status !== 'all' && order.status !== status) return false
-      if (payment && order.paymentStatus !== payment) return false
-      return true
-    })
-  }, [data, search, status, payment])
+  const filtered = useMemo(
+    () => filterOrders(data ?? [], { search, status, payment }),
+    [data, search, status, payment],
+  )
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
-  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const pageCount = pageCountFor(filtered.length, PAGE_SIZE)
+  const paged = paginate(filtered, page, PAGE_SIZE)
+
+  // A new order or a status change should land in the table without a manual
+  // refresh. Coalesced by the hook so a burst produces one refetch.
+  useRealtimeEvents(ORDER_EVENTS, () => {
+    void run().catch(() => {
+      // The next event (or a manual refresh) retries; a dropped refetch must not
+      // surface as an unhandled rejection.
+    })
+  })
+
+  const exportGstReport = () => {
+    if (filtered.length === 0) {
+      push({ title: 'Nothing to export', description: 'No orders match the current filters.', tone: 'danger' })
+      return
+    }
+    downloadCsv(csvFilename('order-gst-report'), buildGstReportCsv(filtered))
+    push({
+      title: 'GST report exported',
+      description: `${filtered.length} order${filtered.length === 1 ? '' : 's'} exported to CSV.`,
+    })
+  }
 
   const doBulk = async (target: OrderStatus) => {
     setBusy(true)
@@ -171,9 +189,9 @@ function OrderList() {
           size="sm"
           variant="outline"
           icon="download"
-          onClick={() => push({ title: 'Export started', description: 'Order export is being prepared.' })}
+          onClick={exportGstReport}
         >
-          Export
+          Export CSV
         </Button>
       </AdminToolbar>
 
@@ -426,9 +444,22 @@ function OrderDetail({ id }: { id: string }) {
               <dd>{order.trackingNumber ?? '—'}</dd>
             </dl>
             {order.invoiceId && (
-              <Link to={`/invoice/${order.invoiceId}`} target="_blank" className="link-button is-ghost">
+              <button
+                type="button"
+                className="link-button is-ghost"
+                onClick={async () => {
+                  try {
+                    const blob = await invoiceService.fetchPdf(order.invoiceId!)
+                    const url = URL.createObjectURL(blob)
+                    window.open(url, '_blank', 'noopener,noreferrer')
+                    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+                  } catch {
+                    push({ title: 'Could not open invoice', description: 'Please try again.', tone: 'danger' })
+                  }
+                }}
+              >
                 <Icon name="download" size={15} /> View invoice
-              </Link>
+              </button>
             )}
           </section>
         </aside>

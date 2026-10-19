@@ -1,44 +1,35 @@
-import { CONTACT_TOPICS, FAQS, REVIEWS, SUPPORT_CATEGORIES, TESTIMONIALS } from '@/data/content'
+import { CONTACT_TOPICS, SUPPORT_CATEGORIES } from '@/data/content'
 import type { FaqItem, Review, Testimonial } from '@/types'
-import { mockRequest, apiFetch, type RequestOptions } from './http'
+import { apiFetch, type RequestOptions } from './http'
 
 /**
  * Editorial content (testimonials, FAQs, product reviews).
  *
  * Served from the backend CMS (`GET /content/testimonials`, `/content/faqs`,
- * `/content/reviews`) which staff curate from the admin console. The local
- * `@/data/content` copy is retained strictly as an offline/seeded fallback and
- * is only used when a caller explicitly passes `skipApi`.
+ * `/content/reviews`) which staff curate from the admin console. There is no
+ * local fallback — every surface reflects what is actually published.
  *
- * `supportCategories` and `contactTopics` have no backend endpoint; they remain
- * local enumerations shared with the contact form.
+ * `supportCategories` and `contactTopics` are UI enumerations (form choices),
+ * not server data, so they are returned directly.
  */
 export const contentService = {
   async testimonials(options?: RequestOptions): Promise<Testimonial[]> {
-    if (options?.skipApi) return mockRequest(() => TESTIMONIALS, options)
     return apiFetch<Testimonial[]>('/content/testimonials', undefined, options)
   },
 
   async faqs(options?: RequestOptions): Promise<FaqItem[]> {
-    if (options?.skipApi) return mockRequest(() => FAQS, options)
     return apiFetch<FaqItem[]>('/content/faqs', undefined, options)
   },
 
-  async supportCategories(options?: RequestOptions) {
-    return mockRequest(() => [...SUPPORT_CATEGORIES], options)
+  async supportCategories(): Promise<ReadonlyArray<(typeof SUPPORT_CATEGORIES)[number]>> {
+    return SUPPORT_CATEGORIES
   },
 
-  async contactTopics(options?: RequestOptions) {
-    return mockRequest(() => [...CONTACT_TOPICS], options)
+  async contactTopics(): Promise<readonly string[]> {
+    return CONTACT_TOPICS
   },
 
   async reviewsFor(productId: string, options?: RequestOptions): Promise<Review[]> {
-    if (options?.skipApi) {
-      return mockRequest(() => REVIEWS.filter((r) => r.productId === productId), {
-        delay: 200,
-        ...options,
-      })
-    }
     return apiFetch<Review[]>(`/content/reviews?productId=${encodeURIComponent(productId)}`, undefined, options)
   },
 }
@@ -85,13 +76,6 @@ export const contactService = {
    * was silently lost while the UI reported success.
    */
   async submit(input: ContactInput, options?: RequestOptions): Promise<{ ticketId: string }> {
-    if (options?.skipApi) {
-      return mockRequest(() => ({ ticketId: `VF-${Math.floor(100000 + Math.random() * 899999)}` }), {
-        delay: 800,
-        ...options,
-      })
-    }
-
     const res = await apiFetch<{ reference?: string }>(
       '/contact',
       {
@@ -130,9 +114,6 @@ export const newsletterService = {
    * success without creating a duplicate.
    */
   async subscribe(email: string, options?: RequestOptions): Promise<NewsletterResult> {
-    if (options?.skipApi) {
-      return mockRequest(() => ({ ok: true as const, email }), { delay: 640, ...options })
-    }
     await apiFetch<{ email: string }>(
       '/content/newsletter',
       { method: 'POST', body: JSON.stringify({ email, source: 'footer' }) },

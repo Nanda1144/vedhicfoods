@@ -13,10 +13,15 @@ interface QuickViewModalProps {
 }
 
 export function QuickViewModal({ product, onClose }: QuickViewModalProps) {
+  if (!product) return null
+  // Keyed so switching products remounts the body and resets the quantity
+  // picker to 1 instead of carrying the previous product's selection over.
+  return <QuickViewContent key={product.id} product={product} onClose={onClose} />
+}
+
+function QuickViewContent({ product, onClose }: { product: Product; onClose: () => void }) {
   const { add } = useCart()
   const [quantity, setQuantity] = useState(1)
-
-  if (!product) return null
 
   const status = stockStatus(product.stock)
   const out = status === 'out'

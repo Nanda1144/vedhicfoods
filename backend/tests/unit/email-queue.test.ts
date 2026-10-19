@@ -97,6 +97,48 @@ describe('EmailQueue retry policy and idempotency', () => {
     expect(attempts).toBe(3)
   })
 
+  it('retries a provider timeout and eventually succeeds', async () => {
+    let attempts = 0
+    vi.spyOn(emailTransport, 'isSimulating').mockReturnValue(false)
+    vi.spyOn(emailTransport, 'sendTransactionalEmail').mockImplementation(async () => {
+      attempts += 1
+      if (attempts === 1) {
+        throw new EmailDeliveryError('timeout', { provider: 'ses', retryable: true, cause: { name: 'TimeoutError' } })
+      }
+      return 'ok'
+    })
+
+    await expect(EmailQueue.sendImmediate('a@example.com', 's', '<p>x</p>', undefined, undefined, 3)).resolves.toBe('ok')
+    expect(attempts).toBe(2)
+  })
+
+  it('retries a failed invoice attachment instead of marking it sent', async () => {
+    vi.spyOn(emailTransport, 'isSimulating').mockReturnValue(false)
+    const sendAttachment = vi
+      .spyOn(emailTransport, 'sendAttachmentEmail')
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+
+    EmailQueue.enqueue({
+      to: 'a@example.com',
+      subject: 'Invoice',
+      htmlBody: '<p>Invoice attached</p>',
+      templateName: 'invoice_customer',
+      variables: {},
+      maxAttempts: 3,
+      dedupeKey: 'invoice:test-1',
+      attachment: { name: 'invoice.pdf', content: 'JVBERi0=' },
+    })
+
+    const deadline = Date.now() + 2000
+    while ((EmailQueue.queueSize() > 0 || EmailQueue.stats().isProcessing) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+
+    expect(sendAttachment).toHaveBeenCalledTimes(2)
+    expect(EmailQueue.queueSize()).toBe(0)
+  })
+
   it('short-circuits to a simulation marker without calling the provider', async () => {
     vi.spyOn(emailTransport, 'isSimulating').mockReturnValue(true)
     const send = vi.spyOn(emailTransport, 'sendTransactionalEmail')

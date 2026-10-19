@@ -15,6 +15,12 @@ export interface CartItem {
   unit: string
   quantity: number
   stock: number
+  /** Server inventory flags surfaced for cart/checkout UI. */
+  isOutOfStock?: boolean
+  hasInsufficientStock?: boolean
+  availableQuantity?: number
+  /** True when the product price changed after this line was added. */
+  priceChanged?: boolean
 }
 
 export interface CartTotals {

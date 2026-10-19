@@ -12,6 +12,8 @@ interface PaymentGatewayProps {
   /** Runs the real payment flow: create order → Razorpay checkout → verify. */
   onPay: () => Promise<void>
   onBack: () => void
+  /** Blocks payment (e.g. unresolved stock issues). */
+  disabled?: boolean
 }
 
 /**
@@ -24,11 +26,12 @@ interface PaymentGatewayProps {
  * fabricates success, failure or delays — money moving is entirely the
  * backend's business.
  */
-export function PaymentGateway({ amount, method, methodLabel, onPay, onBack }: PaymentGatewayProps) {
+export function PaymentGateway({ amount, method, methodLabel, onPay, onBack, disabled = false }: PaymentGatewayProps) {
   const [phase, setPhase] = useState<GatewayPhase>('idle')
   const [failedMessage, setFailedMessage] = useState('')
 
   const startPayment = async () => {
+    if (disabled) return
     setPhase('processing')
     setFailedMessage('')
     try {
@@ -77,7 +80,7 @@ export function PaymentGateway({ amount, method, methodLabel, onPay, onBack }: P
         <p>{failedMessage}</p>
         <p>No money was charged for the failed attempt. Your basket is safe.</p>
         <div className="payment-result__actions">
-          <Button onClick={startPayment} icon="refresh">
+          <Button onClick={startPayment} icon="refresh" disabled={disabled}>
             Try again
           </Button>
           <Button variant="ghost" onClick={onBack}>
@@ -98,7 +101,7 @@ export function PaymentGateway({ amount, method, methodLabel, onPay, onBack }: P
         </span>
         <span className="payment-gateway__method">{methodLabelFor}</span>
       </div>
-      <Button size="lg" fullWidth icon="lock" onClick={() => void startPayment()}>
+      <Button size="lg" fullWidth icon="lock" onClick={() => void startPayment()} disabled={disabled}>
         Pay {formatCurrency(amount)} securely
       </Button>
       <p className="payment-gateway__secure">

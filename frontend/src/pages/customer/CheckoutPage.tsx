@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
-import { useCart } from '@/context'
+import { useCart, useSettings } from '@/context'
 import { orderService, type CheckoutResult } from '@/services/orderService'
 import { paymentService } from '@/services/paymentService'
 import { orderTokenStore } from '@/services/orderTokenStore'
@@ -18,6 +18,12 @@ const DELIVERY_FIELDS: Array<keyof AddressFormData> = ['line1', 'line2', 'city',
 
 const STEPS = ['Customer', 'Address', 'Review', 'Payment'] as const
 
+/** Stable idempotency key for a checkout attempt (see `idempotencyKey` below). */
+function createCheckoutKey(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
+  return `checkout-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
 const METHOD_LABELS: Record<PaymentMethod, string> = {
   razorpay: 'Razorpay',
   upi: 'UPI',
@@ -27,7 +33,8 @@ const METHOD_LABELS: Record<PaymentMethod, string> = {
 }
 
 export function CheckoutPage() {
-  const { items, totals, coupon, clear } = useCart()
+  const { items, totals, coupon, clear, hydrated, hasStockIssues } = useCart()
+  const { settings } = useSettings()
   const navigate = useNavigate()
   const { push } = useToast()
 
@@ -37,12 +44,30 @@ export function CheckoutPage() {
   const [placing, setPlacing] = useState(false)
   const [step, setStep] = useState(1)
 
-  if (items.length === 0) {
+  // Set the moment an order succeeds. The basket is emptied right after, which
+  // would otherwise trip the empty-cart guard below while this page is still
+  // mounted and bounce the customer to /shop instead of /order-success.
+  const [placed, setPlaced] = useState(false)
+
+  // One stable key for this checkout attempt (page lifetime). Retrying a failed
+  // payment reuses it, so the backend returns the existing order instead of
+  // creating a duplicate order and a second inventory reservation.
+  const idempotencyKey = useRef<string>(createCheckoutKey())
+
+  if (hydrated && items.length === 0 && !placed) {
     return <Navigate to="/shop" replace />
   }
 
   const patchAddress = (patch: Partial<AddressFormData>) =>
     setAddress((current) => ({ ...current, ...patch }))
+
+  const warnStockIssues = () => {
+    push({
+      title: 'Fix your basket to continue',
+      description: 'Some items are out of stock or have limited availability. Remove or reduce the flagged item.',
+      tone: 'danger',
+    })
+  }
 
   const validateStep = () => {
     const activeFields = step === 1 ? CUSTOMER_FIELDS : step === 2 ? DELIVERY_FIELDS : []
@@ -55,6 +80,10 @@ export function CheckoutPage() {
   }
 
   const goNext = () => {
+    if (step === 3 && hasStockIssues) {
+      warnStockIssues()
+      return
+    }
     if (validateStep()) {
       setStep((current) => current + 1)
       window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -78,12 +107,12 @@ export function CheckoutPage() {
     lines: items.map((item) => ({ slug: item.slug, quantity: item.quantity })),
     paymentMethod: payment,
     couponCode: coupon?.code,
+    idempotencyKey: idempotencyKey.current,
   })
 
   /** Places the order and persists the anonymous order-access token for guests. */
   const placeCheckout = async (): Promise<CheckoutResult> => {
     const order = await orderService.place(checkoutPayload())
-    clear()
     if (order.orderToken) {
       orderTokenStore.save({
         orderId: order.orderId,
@@ -97,25 +126,16 @@ export function CheckoutPage() {
 
   const goToSuccess = (order: CheckoutResult) => {
     push({
-      title: payment === 'cod' ? 'Order placed' : 'Payment successful',
+      title: 'Payment successful',
       description: `A confirmation and your tax invoice will be emailed to ${address.email}.`,
     })
+    setPlaced(true)
     navigate(`/order-success/${order.orderNumber}`)
-  }
-
-  /** Cash on Delivery — order is placed immediately; payment happens on arrival. */
-  const placeOrder = async (): Promise<void> => {
-    setPlacing(true)
-    try {
-      const order = await placeCheckout()
-      goToSuccess(order)
-    } catch (caught) {
-      push({
-        title: 'Could not place your order',
-        description: caught instanceof Error ? caught.message : 'Please try again.',
-      })
-      setPlacing(false)
-    }
+    // Empty the basket only once the order is actually successful. Clearing it
+    // during `placeCheckout` emptied `items` while this page was still mounted,
+    // so a failed online payment bounced the customer to /shop (the empty-cart
+    // guard below) and made a retry impossible.
+    void clear()
   }
 
   /**
@@ -124,9 +144,14 @@ export function CheckoutPage() {
    * verify HMAC server-side → invoice generated & emailed by the backend.
    */
   const payOnline = async (): Promise<void> => {
+    if (hasStockIssues) {
+      warnStockIssues()
+      return
+    }
     setPlacing(true)
+    let order: CheckoutResult | null = null
     try {
-      const order = await placeCheckout()
+      order = await placeCheckout()
       const orderToken = order.orderToken ?? null
       const init = await paymentService.createRazorpayOrder(order.orderId, { orderToken })
       const payment = await paymentService.openCheckout(init, () => {})
@@ -140,6 +165,19 @@ export function CheckoutPage() {
       )
       goToSuccess(order)
     } catch (caught) {
+      // The order (and its inventory reservation) is created before the customer
+      // is handed to Razorpay. A dismissed/failed checkout emits no gateway
+      // webhook, so release the reservation here; the endpoint is idempotent and
+      // refuses once payment is captured.
+      if (order) {
+        orderService
+          .failPayment(order.orderId, 'Payment cancelled or failed at the gateway', {
+            orderToken: order.orderToken ?? undefined,
+          })
+          .catch(() => {
+            /* best-effort: the stale-payment sweep is the backstop */
+          })
+      }
       push({
         title: 'Payment could not be completed',
         description: caught instanceof Error ? caught.message : 'Please try again.',
@@ -185,6 +223,13 @@ export function CheckoutPage() {
           <div className="checkout-layout">
             <div className="checkout-layout__form">
               <h2 className="address-form__title">{stepTitles[step]}</h2>
+
+              {hasStockIssues && step >= 3 && (
+                <p className="checkout-stock-warning" role="alert">
+                  Some items in your basket are out of stock or have limited availability. Remove or reduce the
+                  flagged items before paying.
+                </p>
+              )}
 
               {step === 1 && (
                 <AddressForm
@@ -235,7 +280,7 @@ export function CheckoutPage() {
                         <dd>{totals.shipping === 0 ? 'Free' : formatCurrency(totals.shipping)}</dd>
                       </div>
                       <div className="row row--between">
-                        <dt>Tax (GST 5%)</dt>
+                        <dt>Tax (GST {Math.round((settings.taxRate ?? 0.05) * 100)}%)</dt>
                         <dd>{formatCurrency(totals.tax)}</dd>
                       </div>
                       {totals.discount > 0 && coupon && (
@@ -255,13 +300,14 @@ export function CheckoutPage() {
 
               {step === 4 && (
                 <div className="checkout-pay">
-                  <PaymentMethodSelector value={payment} onChange={setPayment} />
+                  <PaymentMethodSelector value={payment} onChange={setPayment} codEnabled={settings.codEnabled} />
                   <PaymentGateway
                     amount={totals.total}
                     method={payment}
                     methodLabel={METHOD_LABELS[payment]}
-                    onPay={payment === 'cod' ? placeOrder : payOnline}
+                    onPay={payOnline}
                     onBack={() => setStep(3)}
+                    disabled={hasStockIssues}
                   />
                 </div>
               )}
@@ -275,7 +321,7 @@ export function CheckoutPage() {
                   ) : (
                     <ButtonLinkBack />
                   )}
-                  <Button size="lg" iconRight="arrow-right" onClick={goNext} loading={placing}>
+                  <Button size="lg" iconRight="arrow-right" onClick={goNext} loading={placing} disabled={step === 3 && hasStockIssues}>
                     {step === 3 ? 'Continue to payment' : 'Continue'}
                   </Button>
                 </div>
@@ -286,8 +332,9 @@ export function CheckoutPage() {
               <p className="checkout-layout__summary-label">Your order ({totals.itemCount} items)</p>
               <CartSummary
                 totals={totals}
-                onCheckout={() => (step >= 4 ? setStep(3) : setStep(4))}
+                onCheckout={step >= 4 ? () => setStep(3) : goNext}
                 checkoutLabel={step >= 4 ? 'Back to review' : 'Continue to payment'}
+                checkoutDisabled={step === 3 && hasStockIssues}
                 minimal
               />
             </aside>

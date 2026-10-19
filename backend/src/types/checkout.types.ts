@@ -1,25 +1,40 @@
 import { z } from 'zod'
 import { PaymentMethod, OrderStatus, PaymentStatus } from '@prisma/client'
 
+/**
+ * Control characters (including the NUL byte) are rejected outright: a NUL in a
+ * text column reached Prisma and produced an unhandled 500 instead of a 400.
+ * Messages are user-facing — the UI surfaces `issues[0].message` verbatim.
+ */
+// oxlint-disable-next-line no-control-regex -- deliberate: reject NUL/control bytes
+const NO_CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/
+const text = (label: string, min: number, max: number) =>
+  z
+    .string()
+    .trim()
+    .min(min, `${label} must be at least ${min} characters.`)
+    .max(max, `${label} must be ${max} characters or fewer.`)
+    .refine((value) => !NO_CONTROL_CHARS.test(value), `${label} contains invalid characters.`)
+
 export const checkoutSchema = z.object({
   addressId: z.string().uuid('Invalid address ID format').optional(),
   address: z.object({
-    fullName: z.string().trim().min(2).max(100),
-    phone: z.string().trim().min(10).max(15),
-    line1: z.string().trim().min(3).max(200),
-    line2: z.string().trim().max(200).optional().nullable(),
-    landmark: z.string().trim().max(100).optional().nullable(),
-    city: z.string().trim().min(2).max(100),
-    state: z.string().trim().min(2).max(100),
-    pincode: z.string().trim().min(6).max(10),
-    country: z.string().trim().default('India'),
+    fullName: text('Full name', 2, 100),
+    phone: text('Mobile number', 10, 15),
+    line1: text('Address line 1', 3, 200),
+    line2: text('Address line 2', 0, 200).optional().nullable(),
+    landmark: text('Landmark', 0, 100).optional().nullable(),
+    city: text('City', 2, 100),
+    state: text('State', 2, 100),
+    pincode: text('PIN code', 6, 10),
+    country: text('Country', 0, 100).default('India'),
   }).optional(),
-  paymentMethod: z.nativeEnum(PaymentMethod).default(PaymentMethod.COD),
-  couponCode: z.string().trim().min(2).max(50).optional().nullable(),
-  notes: z.string().trim().max(500).optional().nullable(),
+  paymentMethod: z.nativeEnum(PaymentMethod).default(PaymentMethod.RAZORPAY),
+  couponCode: text('Coupon code', 2, 50).optional().nullable(),
+  notes: text('Notes', 0, 500).optional().nullable(),
   items: z.array(z.object({
     productId: z.string().trim().min(1, 'Product ID or slug is required'),
-    quantity: z.coerce.number().int().min(1, 'Quantity must be at least 1').max(100),
+    quantity: z.coerce.number().int().min(1, 'Quantity must be at least 1').max(100, 'Quantity must be 100 or fewer'),
   })).optional(),
   idempotencyKey: z.string().trim().min(8).max(100).optional(),
 }).refine(

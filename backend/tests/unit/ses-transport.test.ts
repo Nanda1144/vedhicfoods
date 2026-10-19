@@ -113,18 +113,32 @@ describe('SES transport', () => {
     expect(raw).toContain(Buffer.from('<p>Invoice attached</p>', 'utf8').toString('base64'))
   })
 
-  it('returns false (never throws) when an attachment send fails', async () => {
+  it('preserves permanent SES rejection classification for attachment failures', async () => {
     sendMock.mockRejectedValueOnce(Object.assign(new Error('Attachment rejected'), { name: 'MessageRejected' }))
 
-    const ok = await SesEmailService.instance.sendAttachmentEmail({
-      toEmail: 'customer@example.com',
-      toName: 'Jane Doe',
-      subject: 'Your Invoice',
-      htmlContent: '<p>attached</p>',
-      attachment: { name: 'Invoice.pdf', content: Buffer.from('x').toString('base64') },
-    })
+    await expect(
+      SesEmailService.instance.sendAttachmentEmail({
+        toEmail: 'customer@example.com',
+        toName: 'Jane Doe',
+        subject: 'Your Invoice',
+        htmlContent: '<p>attached</p>',
+        attachment: { name: 'Invoice.pdf', content: Buffer.from('x').toString('base64') },
+      })
+    ).rejects.toSatisfy((err: unknown) => err instanceof EmailDeliveryError && err.retryable === false)
+  })
 
-    expect(ok).toBe(false)
+  it('preserves transient throttling classification for attachment failures', async () => {
+    sendMock.mockRejectedValueOnce(Object.assign(new Error('Rate exceeded'), { name: 'ThrottlingException' }))
+
+    await expect(
+      SesEmailService.instance.sendAttachmentEmail({
+        toEmail: 'customer@example.com',
+        toName: 'Jane Doe',
+        subject: 'Your Invoice',
+        htmlContent: '<p>attached</p>',
+        attachment: { name: 'Invoice.pdf', content: Buffer.from('x').toString('base64') },
+      })
+    ).rejects.toSatisfy((err: unknown) => err instanceof EmailDeliveryError && err.retryable === true)
   })
 
   it('rejects a send with no recipients before contacting the provider', async () => {

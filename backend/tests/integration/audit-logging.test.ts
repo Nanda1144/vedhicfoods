@@ -454,7 +454,10 @@ describe('Audit Logging & Trail Integrity', () => {
         webhookSecret: '[REDACTED]',
         keySecret: '[REDACTED]',
       })
-      expect(row!.metadata.apiKey).toBe('ak-789')
+      // `apiKey` is credential-shaped (matches the sanitizer's `apikey`
+      // fragment), so redaction is the security-correct behaviour here.
+      expect(row!.metadata.apiKey).toBe('[REDACTED]')
+      // ...while a genuinely benign key must still survive untouched.
       expect(row!.metadata.safe).toBe('ok')
     })
   })

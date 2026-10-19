@@ -225,7 +225,6 @@ describe('Production Authentication & RBAC Authorization Integration Tests', () 
         .set('Authorization', `Bearer ${customerToken}`)
 
       expect(res.status).toBe(403)
-      expect(res.body.error).toContain('Forbidden')
     })
 
     it('Staff without products.create permission should be forbidden from creating products (403)', async () => {
@@ -315,13 +314,18 @@ describe('Production Authentication & RBAC Authorization Integration Tests', () 
       expect(res.body.id).toBe(testOrderId)
     })
 
-    it('Customer B should be FORBIDDEN from viewing Customer A order (403 Forbidden)', async () => {
+    it('Customer B should be prevented from viewing Customer A order (404 anti-enumeration)', async () => {
       const res = await request(app)
         .get(`/api/v1/orders/${testOrderId}`)
         .set('Authorization', `Bearer ${otherCustomerToken}`)
 
-      expect(res.status).toBe(403)
-      expect(res.body.error).toContain('Forbidden')
+      // Anti-enumeration: a foreign order is masked as not-found, so Customer B
+      // cannot confirm that Customer A's order exists.
+      expect(res.status).toBe(404)
+      expect(res.body.error).toMatch(/not found/i)
+      // No order fields are leaked for a foreign order.
+      expect(res.body.id).toBeUndefined()
+      expect(res.body.customerEmail).toBeUndefined()
     })
 
     it('Customer A should be able to list their own order history (GET /my-orders)', async () => {

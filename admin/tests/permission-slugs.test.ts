@@ -70,11 +70,13 @@ const BACKEND_ENFORCED_SLUGS = new Set([
   'settings.update',
   'staff.read',
   'staff.create',
-  'staff.update',
-  'staff.delete',
-  'reports.read',
-  'audit_logs.read',
-])
+    'staff.update',
+    'staff.delete',
+    'reports.read',
+    'audit_logs.read',
+    'content.read',
+    'content.update',
+  ])
 
 /** Exactly what `GET /api/v1/admin/auth/login` puts in `user.permissions`. */
 const SERVER_GRANTS = [
@@ -113,11 +115,13 @@ const SERVER_GRANTS = [
   'settings.update',
   'staff.read',
   'staff.create',
-  'staff.update',
-  'staff.delete',
-  'reports.read',
-  'audit_logs.read',
-]
+    'staff.update',
+    'staff.delete',
+    'reports.read',
+    'audit_logs.read',
+    'content.read',
+    'content.update',
+  ]
 
 function sessionWith(permissions: string[]): AdminSession {
   return {
@@ -149,21 +153,22 @@ describe('adminAuthService.can() against real server grants', () => {
     const session = sessionWith(SERVER_GRANTS)
 
     // One representative per nav entry, as they are actually written today.
-    const navPermissions: Permission[] = [
-      'products.read',
-      'categories.read',
-      'inventory.read',
-      'orders.read',
-      'customers.read',
-      'delivery.read',
-      'invoices.read',
-      'discounts.read',
-      'support.read',
-      'settings.read',
-      'staff.read',
-      'audit_logs.read',
-      'reports.read',
-    ]
+      const navPermissions: Permission[] = [
+        'products.read',
+        'categories.read',
+        'inventory.read',
+        'orders.read',
+        'customers.read',
+        'delivery.read',
+        'invoices.read',
+        'discounts.read',
+        'support.read',
+        'settings.read',
+        'staff.read',
+        'audit_logs.read',
+        'reports.read',
+        'content.read',
+      ]
 
     for (const permission of navPermissions) {
       expect(adminAuthService.can(session, permission)).toBe(true)

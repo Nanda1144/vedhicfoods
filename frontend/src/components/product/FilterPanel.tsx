@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { Category, ProductFilters } from '@/types'
 import { Checkbox, Select, Switch, Icon, Button } from '../common'
 import { formatNumber } from '@/utils/format'
@@ -18,15 +18,20 @@ interface FilterPanelProps {
 export function FilterPanel({ filters, categories, tags, priceBounds, onChange, onReset, onClose }: FilterPanelProps) {
   const [minInput, setMinInput] = useState(filters.minPrice ?? '')
   const [maxInput, setMaxInput] = useState(filters.maxPrice ?? '')
+  const priceKey = `${filters.minPrice ?? ''}|${filters.maxPrice ?? ''}`
+  const [syncedPrice, setSyncedPrice] = useState(priceKey)
   const activeCount = countActive(filters)
   const presetPrice = PRICE_PRESETS.filter(
     (preset) => preset.min === filters.minPrice && preset.max === filters.maxPrice && preset.min !== null,
   )[0]
 
-  useEffect(() => {
+  // Keep the text inputs in sync when the price filter changes from elsewhere
+  // (URL sync, reset, presets) using render-time state adjustment.
+  if (syncedPrice !== priceKey) {
+    setSyncedPrice(priceKey)
     setMinInput(filters.minPrice ?? '')
     setMaxInput(filters.maxPrice ?? '')
-  }, [filters.minPrice, filters.maxPrice])
+  }
 
   const commitPrice = () => {
     const min = minInput === '' ? null : Number(minInput)

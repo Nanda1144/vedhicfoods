@@ -34,6 +34,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
 ) {
   const generatedId = useId()
   const inputId = id ?? generatedId
+  const helpId = error || hint ? `${inputId}-help` : undefined
+  const describedBy = [ariaDescribedBy, helpId].filter(Boolean).join(' ') || undefined
 
   const control = (
     <span
@@ -52,8 +54,10 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
         ref={ref}
         id={inputId}
         className="input__control"
+        required={required}
+        aria-required={required || undefined}
         aria-invalid={ariaInvalid ?? Boolean(error)}
-        aria-describedby={ariaDescribedBy ?? (error || hint ? `${inputId}-help` : undefined)}
+        aria-describedby={describedBy}
         {...props}
       />
       {suffix !== undefined && <span className="input__suffix">{suffix}</span>}

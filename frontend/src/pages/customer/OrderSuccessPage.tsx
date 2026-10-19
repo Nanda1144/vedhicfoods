@@ -4,7 +4,7 @@ import { orderService } from '@/services/orderService'
 import { useAsync } from '@/hooks'
 import { useCart } from '@/context'
 import { formatCurrency, formatDateTime } from '@/utils/format'
-import { PageHeader, ButtonLink, LoadingState, Badge } from '@/components/common'
+import { PageHeader, ButtonLink, Button, LoadingState, Badge } from '@/components/common'
 import { Icon } from '@/components/common'
 
 export function OrderSuccessPage() {
@@ -28,16 +28,25 @@ export function OrderSuccessPage() {
 
   if (order.error || !order.data) {
     return (
-      <PageHeader
-        eyebrow="Order"
-        title="Order not found"
-        meta={
-          <p className="page-header__hint">
-            This link may have expired. Open the newest confirmation email for your order, or check your{' '}
-            <Link to="/support">support centre</Link> for assistance.
-          </p>
-        }
-      />
+      <>
+        <PageHeader
+          eyebrow="Order"
+          title="Order not found"
+          meta={
+            <p className="page-header__hint">
+              This link may have expired. Open the newest confirmation email for your order, or check your{' '}
+              <Link to="/support">support centre</Link> for assistance.
+            </p>
+          }
+        />
+        <section className="section">
+          <div className="container center">
+            <Button variant="outline" onClick={() => void order.run().catch(() => {})}>
+              Try again
+            </Button>
+          </div>
+        </section>
+      </>
     )
   }
 

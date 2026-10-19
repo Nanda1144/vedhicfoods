@@ -7,7 +7,6 @@ import { OrderEmailService } from './order-email.service'
 import {
   BadRequestError,
   NotFoundError,
-  ForbiddenError,
   ConflictError,
 } from '../utils/errors'
 import {
@@ -692,7 +691,9 @@ export class DeliveryService {
     const isOwner = order.userId === userId
 
     if (!isOwner && !isStaffOrAdmin) {
-      throw new ForbiddenError('You are not authorized to view delivery information for another customer\'s order')
+      // Ownership failures raise NotFoundError rather than ForbiddenError so the
+      // endpoint cannot distinguish an existing order from a missing one.
+      throw new NotFoundError(`Order '${trimmed}' not found`)
     }
 
     const delivery = await this.resolveDelivery(order.id)

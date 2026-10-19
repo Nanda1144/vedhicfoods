@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { useSettings } from '@/context'
 import { contentService } from '@/services/contentService'
 import { useAsync } from '@/hooks'
-import { PageHeader, SectionLink, Icon, Skeleton, type IconName } from '@/components/common'
+import { PageHeader, SectionLink, Icon, Skeleton, EmptyState, ErrorState, type IconName } from '@/components/common'
 
 const CATEGORY_ICONS: Record<string, IconName> = {
   order: 'package-open',
@@ -41,28 +41,44 @@ export function SupportPage() {
 
       <section className="section">
         <div className="container">
-          <div className="support-grid">
-            {categories.loading
-              ? Array.from({ length: 4 }).map((_, index) => (
-                  <Skeleton key={index} style={{ width: '100%', height: 148 }} />
-                ))
-              : categories.data?.map((category) => (
-                  <Link
-                    key={category.id}
-                    to={`/faq#${CATEGORY_ANCHORS[category.id] ?? 'products'}`}
-                    className="support-card"
-                  >
-                    <span className="support-card__icon">
-                      <Icon name={CATEGORY_ICONS[category.id] ?? 'box'} size={22} />
-                    </span>
-                    <strong>{category.title}</strong>
-                    <span>{category.copy}</span>
-                    <span className="support-card__cta">
-                      Browse help <Icon name="arrow-right" size={14} />
-                    </span>
-                  </Link>
-                ))}
-          </div>
+          {categories.loading ? (
+            <div className="support-grid">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <Skeleton key={index} style={{ width: '100%', height: 148 }} />
+              ))}
+            </div>
+          ) : categories.error ? (
+            <ErrorState
+              title="We couldn't load the help topics"
+              description={categories.error.message || 'Please try again in a moment.'}
+              onRetry={() => void categories.run().catch(() => {})}
+            />
+          ) : categories.data?.length ? (
+            <div className="support-grid">
+              {categories.data.map((category) => (
+                <Link
+                  key={category.id}
+                  to={`/faq#${CATEGORY_ANCHORS[category.id] ?? 'products'}`}
+                  className="support-card"
+                >
+                  <span className="support-card__icon">
+                    <Icon name={CATEGORY_ICONS[category.id] ?? 'box'} size={22} />
+                  </span>
+                  <strong>{category.title}</strong>
+                  <span>{category.copy}</span>
+                  <span className="support-card__cta">
+                    Browse help <Icon name="arrow-right" size={14} />
+                  </span>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              title="No help topics yet"
+              description="Reach out to our team and we'll get back to you within 24 hours."
+              action={<SectionLink to="/contact">Contact the team</SectionLink>}
+            />
+          )}
 
           <div className="support-strip">
             <div className="support-strip__copy">

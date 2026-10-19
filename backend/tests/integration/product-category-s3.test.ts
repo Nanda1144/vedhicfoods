@@ -4,6 +4,7 @@ import request from 'supertest'
 import { createApp } from '../../src/app'
 import { AuthService } from '../../src/services/auth.service'
 import { prisma } from '../../src/config/database'
+import { ensureDemoCustomer, DEMO_CUSTOMER_EMAIL, DEMO_CUSTOMER_PASSWORD } from './helpers/demo-user'
 
 const app = createApp()
 
@@ -40,10 +41,11 @@ describe('Product, Category & Amazon S3 Integration Tests', () => {
     staffWithoutPermissionToken = staffLogin.accessToken
     staffWithPermissionToken = adminToken // Admin holds all permissions including products.create
 
-    // 3. Authenticate Seeded Customer
+    // 3. Authenticate Seeded Customer (recreated deterministically for tests)
+    await ensureDemoCustomer()
     const customerLogin = await AuthService.login({
-      email: 'customer@vedhicfoods.com',
-      password: 'Customer@Vedhic2026',
+      email: DEMO_CUSTOMER_EMAIL,
+      password: DEMO_CUSTOMER_PASSWORD,
     })
     customerToken = customerLogin.accessToken
   }, 60000)

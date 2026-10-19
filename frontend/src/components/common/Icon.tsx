@@ -70,6 +70,8 @@ export type IconName =
   | 'trend-up'
   | 'trend-down'
   | 'package-open'
+  | 'play'
+  | 'pause'
 
 const STROKE: SVGProps<SVGSVGElement> = {
   width: 20,
@@ -509,6 +511,13 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M12 3 3 7.5v9L12 21l9-4.5v-9z" />
       <path d="M3 7.5 9 11M21 7.5 15 11M12 12v9" />
       <path d="m7.5 9 -1.5 4 3 3 5.5-3.5" strokeWidth="1.2" />
+    </>
+  ),
+  play: <path d="M8 5.5v13l11-6.5z" />,
+  pause: (
+    <>
+      <path d="M9.5 5.5v13" />
+      <path d="M14.5 5.5v13" />
     </>
   ),
 }

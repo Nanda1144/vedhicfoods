@@ -1,83 +1,241 @@
 import { Request, Response, NextFunction } from 'express'
 import { prisma } from '../config/database'
-import { OrderStatus, PaymentStatus, RoleName } from '@prisma/client'
+import { OrderStatus, PaymentStatus, Prisma, RoleName } from '@prisma/client'
 import { ValidationError } from '../utils/errors'
 
 import { clampPageNumber, clampPageSize } from '../utils/pagination'
 
+/**
+ * Human-readable labels for the status breakdown widget. Exported so the
+ * console can stay in lock-step if it ever needs the same vocabulary.
+ */
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  PENDING: 'Pending',
+  PENDING_PAYMENT: 'Pending payment',
+  PAYMENT_FAILED: 'Payment failed',
+  CONFIRMED: 'Confirmed',
+  PROCESSING: 'Processing',
+  PACKED: 'Packed',
+  SHIPPED: 'Shipped',
+  OUT_FOR_DELIVERY: 'Out for delivery',
+  DELIVERED: 'Delivered',
+  CANCELLED: 'Cancelled',
+  FAILED: 'Failed',
+}
+
 export class AdminController {
+  /**
+   * GET /api/v1/admin/dashboard
+   *
+   * Returns every dashboard widget in one aggregate payload.
+   *
+   * CORRECTNESS: this previously returned only raw counts plus the 10 most
+   * recent orders, and the console derived revenue, the weekly series, top
+   * products and category performance in the browser from a *bounded* slice of
+   * the data. The result was several silently-wrong figures — most visibly a
+   * "last 30 days" revenue card backed by an all-time, unbounded aggregate.
+   * Every widget is now computed here against the full dataset with an explicit
+   * date window.
+   *
+   * PERFORMANCE: all primary reads run in one `Promise.all`. The dashboard no
+   * longer forces the console into a chain of paginated `fetchAll` calls (up to
+   * ~22 sequential requests that routinely exceeded the 60s client timeout).
+   */
   public static async getDashboard(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
+      const now = new Date()
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+      const tenWeeksAgo = new Date(now.getTime() - 70 * 24 * 60 * 60 * 1000)
+
       const [
         totalOrders,
-        pendingOrders,
-        deliveredOrders,
-        cancelledOrders,
         totalCustomers,
         totalProducts,
         lowStock,
-        totalRevenue,
+        revenueAgg,
+        revenue30dAgg,
+        pendingOrders,
         recentOrders,
-        recentPayments,
-        totalDiscounts,
-        totalInventory,
-        totalDeliveries,
-        invoiceStats,
+        statusGroups,
+        recentCustomers,
+        topItems,
+        categoryGroups,
+        categories,
+        weeklyOrders,
       ] = await Promise.all([
         prisma.order.count(),
-        prisma.order.count({ where: { status: OrderStatus.PENDING } }),
-        prisma.order.count({ where: { status: OrderStatus.DELIVERED } }),
-        prisma.order.count({ where: { status: OrderStatus.CANCELLED } }),
         prisma.user.count({ where: { isDeleted: false, role: RoleName.CUSTOMER } }),
-        prisma.product.count({ where: { isActive: true } }),
-        prisma.product.count({ where: { stock: { lte: 10, gt: 0 } } }),
+        prisma.product.count({ where: { isActive: true, isDeleted: false } }),
+        prisma.product.count({ where: { isActive: true, isDeleted: false, stock: { gt: 0, lte: 10 } } }),
         prisma.order.aggregate({
           _sum: { total: true },
           where: { paymentStatus: PaymentStatus.PAID, status: { not: OrderStatus.CANCELLED } },
+        }),
+        prisma.order.aggregate({
+          _sum: { total: true },
+          where: {
+            paymentStatus: PaymentStatus.PAID,
+            status: { not: OrderStatus.CANCELLED },
+            createdAt: { gte: thirtyDaysAgo },
+          },
+        }),
+        prisma.order.count({
+          where: { status: { in: [OrderStatus.PENDING, OrderStatus.PENDING_PAYMENT, OrderStatus.PAYMENT_FAILED] } },
         }),
         prisma.order.findMany({
           take: 10,
           orderBy: { createdAt: 'desc' },
           include: {
             items: true,
-            user: { select: { fullName: true, email: true } },
+            user: { select: { id: true, fullName: true, email: true } },
           },
         }),
-        prisma.payment.findMany({
-          take: 10,
+        prisma.order.groupBy({ by: ['status'], _count: { _all: true } }),
+        prisma.user.findMany({
+          where: { isDeleted: false, role: RoleName.CUSTOMER },
+          take: 8,
           orderBy: { createdAt: 'desc' },
-          include: {
-            order: { select: { orderNumber: true, customerName: true, total: true } },
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            phone: true,
+            isActive: true,
+            isVerified: true,
+            lastLoginAt: true,
+            createdAt: true,
+            _count: { select: { orders: true } },
           },
         }),
-        prisma.coupon.count({ where: { isActive: true } }),
-        prisma.product.aggregate({ _sum: { stock: true } }),
-        prisma.delivery.count(),
-        prisma.invoice.aggregate({ _count: true, _sum: { total: true } }),
+        prisma.orderItem.groupBy({
+          by: ['productId'],
+          where: { productId: { not: null } },
+          _sum: { quantity: true, subtotal: true },
+          orderBy: { _sum: { quantity: 'desc' } },
+          take: 5,
+        }),
+        prisma.product.groupBy({
+          by: ['categoryId'],
+          where: { isDeleted: false },
+          _count: { _all: true },
+          _sum: { stock: true },
+        }),
+        prisma.category.findMany({ select: { id: true, name: true } }),
+        prisma.$queryRaw<Array<{ weekStart: Date; orders: number; revenue: Prisma.Decimal }>>`
+          SELECT
+            date_trunc('week', "createdAt") AS "weekStart",
+            COUNT(*)::integer AS "orders",
+            COALESCE(
+              SUM(CASE WHEN "paymentStatus" = 'PAID' AND "status" <> 'CANCELLED' THEN "total" ELSE 0 END),
+              0
+            ) AS "revenue"
+          FROM orders
+          WHERE "createdAt" >= ${tenWeeksAgo}
+          GROUP BY date_trunc('week', "createdAt")
+          ORDER BY date_trunc('week', "createdAt") ASC
+        `,
       ])
+
+      const revenue = Number(revenueAgg._sum.total ?? 0)
+      const revenue30d = Number(revenue30dAgg._sum.total ?? 0)
+
+      const statusCount = (status: OrderStatus): number =>
+        statusGroups.find((group) => group.status === status)?._count._all ?? 0
+
+      const orderStatusBreakdown = statusGroups
+        .map((group) => ({
+          label: ORDER_STATUS_LABELS[group.status] ?? group.status,
+          value: group._count._all,
+        }))
+        .sort((a, b) => b.value - a.value)
+
+      // PostgreSQL returns one row per week, so application memory stays
+      // bounded to at most eleven buckets regardless of order volume.
+      const revenueSeries = weeklyOrders.slice(-10).map((bucket, index) => ({
+        label: `Wk ${index + 1}`,
+        revenue: Math.round(Number(bucket.revenue)),
+        orders: Number(bucket.orders),
+      }))
+
+      // Top products across the whole catalogue of order items.
+      const topProductIds = topItems
+        .map((item) => item.productId)
+        .filter((id): id is string => Boolean(id))
+      const topProductDetails = topProductIds.length
+        ? await prisma.product.findMany({ where: { id: { in: topProductIds } }, select: { id: true, name: true } })
+        : []
+      const productNameById = new Map(topProductDetails.map((product) => [product.id, product.name]))
+      const topProducts = topItems
+        .filter((item) => item.productId)
+        .map((item) => ({
+          productId: item.productId as string,
+          name: productNameById.get(item.productId as string) ?? 'Product',
+          image: '',
+          unitsSold: item._sum.quantity ?? 0,
+          revenue: Math.round(Number(item._sum.subtotal ?? 0)),
+        }))
+
+      // Lifetime spend for the recent-customer cards.
+      const customerIds = recentCustomers.map((customer) => customer.id)
+      const spendGroups = customerIds.length
+        ? await prisma.order.groupBy({
+            by: ['userId'],
+            where: { userId: { in: customerIds }, paymentStatus: PaymentStatus.PAID },
+            _sum: { total: true },
+          })
+        : []
+      const spendByUser = new Map(spendGroups.map((group) => [group.userId, Number(group._sum.total ?? 0)]))
+      const recentCustomersPayload = recentCustomers.map((customer) => ({
+        id: customer.id,
+        fullName: customer.fullName,
+        email: customer.email,
+        phone: customer.phone,
+        isActive: customer.isActive,
+        isVerified: customer.isVerified,
+        lastLoginAt: customer.lastLoginAt,
+        createdAt: customer.createdAt,
+        orderCount: customer._count.orders,
+        totalSpent: spendByUser.get(customer.id) ?? 0,
+      }))
+
+      // Category performance, shared by stock and count.
+      const categoryNameById = new Map(categories.map((category) => [category.id, category.name]))
+      const totalStock = categoryGroups.reduce((sum, group) => sum + (group._sum.stock ?? 0), 0) || 1
+      const categoryPerformance = categoryGroups
+        .map((group) => {
+          const stock = group._sum.stock ?? 0
+          return {
+            name: categoryNameById.get(group.categoryId) ?? 'Uncategorised',
+            count: group._count._all,
+            stock,
+            value: stock,
+            share: Math.round((stock / totalStock) * 100),
+          }
+        })
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 6)
 
       res.status(200).json({
         success: true,
         data: {
           overview: {
             totalOrders,
-            revenue: Number(totalRevenue._sum.total || 0),
+            revenue,
+            revenue30d,
             pendingOrders,
-            deliveredOrders,
-            cancelledOrders,
+            deliveredOrders: statusCount(OrderStatus.DELIVERED),
+            cancelledOrders: statusCount(OrderStatus.CANCELLED),
             totalCustomers,
             totalProducts,
             lowStock,
-            totalDiscounts,
-            totalInventory: Number(totalInventory._sum.stock || 0),
-            totalDeliveries,
           },
           recentOrders,
-          recentPayments,
-          invoiceStats: {
-            count: invoiceStats._count,
-            total: Number(invoiceStats._sum.total || 0),
-          },
+          recentCustomers: recentCustomersPayload,
+          topProducts,
+          revenueSeries,
+          orderStatusBreakdown,
+          categoryPerformance,
+          lowStockCount: lowStock,
         },
       })
     } catch (error) {

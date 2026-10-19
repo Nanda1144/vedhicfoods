@@ -207,14 +207,19 @@ Grant the TaskRole in `backend/infra/iam-policies.json` — never an IAM user. D
 environment; if set, the SDK prefers them over the task role, and a leaked
 static key grants access until someone notices and revokes it.
 
-### 4.4 Known gap: `buildPublicUrl`
+### 4.4 Serving media: `AWS_S3_PUBLIC_BASE_URL`
 
-`S3Service.buildPublicUrl` (`backend/src/integrations/aws/s3/s3.service.ts:163`)
-still constructs a direct `{bucket}.s3.{region}.amazonaws.com/{key}` URL. Against
-a private OAC bucket that URL returns `403`, so product images and invoices fail
-to load. **Resolve this before go-live** (see 6/7 in `SECURITY_AUDIT_REPORT.md`) —
-either add a CloudFront distribution-domain builder or serve media through the
-presigned URLs the service already generates (`s3.service.ts:406`).
+`S3Service.buildPublicUrl` constructs a direct
+`{bucket}.s3.{region}.amazonaws.com/{key}` URL by default. Against a private OAC
+bucket that URL returns `403`, so product images and invoices fail to load.
+
+Set **`AWS_S3_PUBLIC_BASE_URL`** to the CloudFront distribution origin (e.g.
+`https://cdn.vedhicfoods.com`, no trailing slash) and `buildPublicUrl` emits
+`{base}/{key}` instead. It is optional: if unset, the service keeps the direct S3
+URL it always produced, so a deployment that serves media through presigned URLs
+(`s3.service.ts`) is unaffected. This is wired through the env schema
+(`backend/src/config/env.ts`), the task definition
+(`backend/infra/ecs-task-definition.json`) and `.env.production.example`.
 
 ---
 
@@ -282,10 +287,12 @@ fails if a literal value is found in the `secrets` block.
   for the ALB target group, so a database blip removes the task from rotation
   without restarting it.
 - **Log group:** `vedhicfoods/backend`. The task definition sets
-  `awslogs-create-group: true`, but that is a fallback only — the ECS execution
-  role in `infra/iam-policies.json` deliberately grants no
-  `logs:CreateLogGroup`, so the group must pre-exist. Create it (with retention)
-  via `infra/scripts/create-cloudwatch.ps1` before the first task starts.
+  `awslogs-create-group: true`, and the ECS execution role in
+  `infra/iam-policies.json` now grants `logs:CreateLogGroup` on
+  `arn:aws:logs:ap-south-1:*:log-group:/vedhicfoods/backend*`, so the group is
+  created on demand. Creating it ahead of time (with retention) via
+  `infra/scripts/create-cloudwatch.ps1` is still recommended so retention is set
+  before any logs are written.
   Retention is 30 days, set as CloudWatch **log retention** — not a "lifecycle
   rule"; the two are different features and CloudWatch Logs has no lifecycle
   rules.

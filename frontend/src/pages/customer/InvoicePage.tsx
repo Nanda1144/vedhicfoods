@@ -1,5 +1,7 @@
+import { useEffect, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { invoiceService } from '@/services/invoiceService'
+import { orderTokenStore } from '@/services/orderTokenStore'
 import { useAsync } from '@/hooks'
 import { useSettings } from '@/context'
 import { formatCurrency, formatDateTime } from '@/utils/format'
@@ -16,6 +18,29 @@ export function InvoicePage() {
     [id, orderNumber],
   )
 
+  const persistedInvoiceId = useRef<string | null>(null)
+
+  // The token is stored under the order id/number, never the invoice id, so a
+  // guest reaching the invoice by order number would otherwise send no
+  // X-Order-Token on download. Persist the alias once per invoice id.
+  useEffect(() => {
+    const loaded = invoice.data
+    if (!loaded?.id || persistedInvoiceId.current === loaded.id) return
+    const token =
+      orderTokenStore.get(orderNumber ?? '') ??
+      orderTokenStore.get(loaded.orderNumber) ??
+      orderTokenStore.get(loaded.orderId) ??
+      orderTokenStore.get(loaded.id)
+    if (!token) return
+    persistedInvoiceId.current = loaded.id
+    orderTokenStore.save({
+      orderId: loaded.orderId,
+      orderNumber: loaded.orderNumber,
+      invoiceId: loaded.id,
+      token,
+    })
+  }, [invoice.data, orderNumber])
+
   if (invoice.loading) {
     return (
       <section className="section">
@@ -27,7 +52,13 @@ export function InvoicePage() {
   }
 
   if (invoice.error || !invoice.data) {
-    return <ErrorState title="Invoice not found" description={invoice.error?.message} />
+    return (
+      <ErrorState
+        title="Invoice not found"
+        description={invoice.error?.message}
+        onRetry={() => void invoice.run().catch(() => {})}
+      />
+    )
   }
 
   const data = invoice.data
@@ -45,10 +76,17 @@ export function InvoicePage() {
               Print
             </Button>
             <Button variant="primary" icon="download" onClick={() => {
-              invoiceService.downloadUrl(data.id).then((url) => {
+              const token =
+                orderTokenStore.get(orderNumber ?? '') ??
+                orderTokenStore.get(data.orderNumber) ??
+                orderTokenStore.get(data.orderId) ??
+                orderTokenStore.get(data.id)
+              invoiceService.fetchPdf(data.id, token ? { orderToken: token } : undefined).then((blob) => {
+                const url = URL.createObjectURL(blob)
                 window.open(url, '_blank')
+                window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
               }).catch(() => {
-                // Fallback to print if download fails
+                // Fallback to print only after a genuine download failure
                 invoiceService.print()
               })
             }}>
@@ -101,7 +139,8 @@ export function InvoicePage() {
               </div>
             </section>
 
-            <table className="invoice__table">
+            <div className="invoice__table-wrap">
+              <table className="invoice__table">
               <thead>
                 <tr>
                   <th>Item</th>
@@ -120,7 +159,8 @@ export function InvoicePage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+              </table>
+            </div>
 
             <div className="invoice__totals">
               <dl>

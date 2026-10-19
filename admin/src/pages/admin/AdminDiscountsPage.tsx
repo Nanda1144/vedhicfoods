@@ -6,10 +6,9 @@ import { useToast } from '@/context'
 import { formatCurrency, formatDate } from '@/utils/format'
 import { AdminPageHeader, DataTable, StatusPill, ConfirmDialog, AdminToolbar, PaginationBar } from '@/components/admin'
 import type { Column } from '@/components/admin'
-import type { Discount, DiscountType } from '@/types'
+import type { Discount, DiscountType, Category } from '@/types'
 import { Badge, Button, Modal, Skeleton, Icon } from '@/components/common'
 import { Field, Input, Select, Switch } from '@/components/common/form'
-import { CATEGORIES } from '@/data/categories'
 
 const PAGE_SIZE = 8
 
@@ -30,6 +29,8 @@ export function AdminDiscountsPage() {
   const [busy, setBusy] = useState(false)
 
   const { data, loading, error, run } = useAsync(() => adminService.discounts(), [])
+  const { data: categoriesData } = useAsync(() => adminService.categories(), [])
+  const categories = categoriesData ?? []
 
   const filtered = (data ?? []).filter((discount) => {
     const query = search.trim().toLowerCase()
@@ -191,6 +192,7 @@ export function AdminDiscountsPage() {
       {editing && (
         <DiscountModal
           discount={editing === 'new' ? null : editing}
+          categories={categories}
           onClose={() => setEditing(null)}
           onSaved={async () => {
             await run()
@@ -213,7 +215,7 @@ export function AdminDiscountsPage() {
   )
 }
 
-function DiscountModal({ discount, onClose, onSaved }: { discount: Discount | null; onClose: () => void; onSaved: () => void }) {
+function DiscountModal({ discount, categories, onClose, onSaved }: { discount: Discount | null; categories: Category[]; onClose: () => void; onSaved: () => void }) {
   const { push } = useToast()
   const isNew = discount === null
   const [form, setForm] = useState({
@@ -224,6 +226,7 @@ function DiscountModal({ discount, onClose, onSaved }: { discount: Discount | nu
     minOrderValue: discount?.minOrderValue ?? '',
     maxUses: discount?.maxUses ?? '',
     appliesTo: discount?.appliesTo ?? ('all' as Discount['appliesTo']),
+    targetCategoryId: discount?.appliesTo === 'category' ? (discount.targetIds[0] ?? '') : '',
     active: discount?.active ?? true,
   })
   const [saving, setSaving] = useState(false)
@@ -245,7 +248,10 @@ function DiscountModal({ discount, onClose, onSaved }: { discount: Discount | nu
         maxUses: Number(form.maxUses || 0),
         usedCount: discount?.usedCount ?? 0,
         appliesTo: form.appliesTo,
-        targetIds: discount?.targetIds ?? [],
+        targetIds:
+          form.appliesTo === 'category'
+            ? (form.targetCategoryId ? [form.targetCategoryId] : [])
+            : (discount?.targetIds ?? []),
         startsAt: new Date().toISOString(),
         expiresAt: discount?.expiresAt ?? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
         active: form.active,
@@ -323,9 +329,10 @@ function DiscountModal({ discount, onClose, onSaved }: { discount: Discount | nu
         {form.appliesTo === 'category' && (
           <Field label="Target category">
             <Select
-              defaultValue={CATEGORIES[0]?.slug}
+              value={form.targetCategoryId}
+              onChange={(event) => patch('targetCategoryId', event.target.value)}
               aria-label="Target category"
-              options={CATEGORIES.map((category) => ({ value: category.slug, label: category.name }))}
+              options={categories.map((category) => ({ value: category.id, label: category.name }))}
             />
           </Field>
         )}

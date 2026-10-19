@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useLayoutEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   AnnouncementBar,
@@ -14,69 +14,34 @@ import { cn } from '@/utils/cn'
 import { useCart } from '@/context'
 import { SkipLink } from './SkipLink'
 
-interface BottomNavProps {
-  onOpenSearch: () => void
-  onOpenCart: () => void
-}
+const BOTTOM_NAV: Array<{ label: string; to: string; icon: 'home' | 'grid' | 'store' | 'phone' | 'info'; end?: boolean }> = [
+  { label: 'Home', to: '/', icon: 'home', end: true },
+  { label: 'Categories', to: '/categories', icon: 'grid' },
+  { label: 'Shop', to: '/shop', icon: 'store' },
+  { label: 'Contact Us', to: '/contact', icon: 'phone' },
+  { label: 'About', to: '/about', icon: 'info' },
+]
 
-export function BottomNav({ onOpenSearch, onOpenCart }: BottomNavProps) {
-  const { count } = useCart()
-
+export function BottomNav() {
   return (
     <nav className="bottom-nav" aria-label="Mobile navigation">
       <ul className="bottom-nav__list">
-        <li>
-          <NavLink
-            to="/"
-            end
-            className={({ isActive }) => cn('bottom-nav__item', isActive && 'is-active')}
-          >
-            <span className="bottom-nav__icon">
-              <Icon name="home" size={20} />
-            </span>
-            <span>Home</span>
-          </NavLink>
-        </li>
-        <li>
-          <button type="button" className="bottom-nav__item" aria-label="Search products" onClick={onOpenSearch}>
-            <span className="bottom-nav__icon">
-              <Icon name="search" size={20} />
-            </span>
-            <span>Search</span>
-          </button>
-        </li>
-        <li>
-          <NavLink
-            to="/shop"
-            className={({ isActive }) => cn('bottom-nav__item bottom-nav__item--shop', isActive && 'is-active')}
-          >
-            <span className="bottom-nav__icon">
-              <Icon name="grid" size={20} />
-            </span>
-            <span>Shop</span>
-          </NavLink>
-        </li>
-        <li>
-          <button type="button" className="bottom-nav__item" aria-label="Open shopping cart" onClick={onOpenCart}>
-            <span className="bottom-nav__icon">
-              <Icon name="cart" size={20} />
-              {count > 0 && (
-                <span className="bottom-nav__badge" aria-live="polite">
-                  {count > 9 ? '9+' : count}
-                </span>
-              )}
-            </span>
-            <span>Cart</span>
-          </button>
-        </li>
-        <li>
-          <NavLink to="/contact" className="bottom-nav__item">
-            <span className="bottom-nav__icon">
-              <Icon name="phone" size={20} />
-            </span>
-            <span>Contact</span>
-          </NavLink>
-        </li>
+        {BOTTOM_NAV.map((item) => (
+          <li key={item.to}>
+            <NavLink
+              to={item.to}
+              end={item.end}
+              className={({ isActive }) =>
+                cn('bottom-nav__item', item.to === '/shop' && 'bottom-nav__item--shop', isActive && 'is-active')
+              }
+            >
+              <span className="bottom-nav__icon">
+                <Icon name={item.icon} size={20} />
+              </span>
+              <span className="bottom-nav__label">{item.label}</span>
+            </NavLink>
+          </li>
+        ))}
       </ul>
     </nav>
   )
@@ -87,6 +52,15 @@ export function CustomerLayout() {
   const { isOpen: cartOpen, close: closeCart, open: openCart } = useCart()
   const [menuOpen, setMenuOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
+  const locationKey = `${location.pathname}${location.search}`
+  const [syncedLocation, setSyncedLocation] = useState(locationKey)
+
+  // Close the mobile menu / search overlay on navigation (render-time reset).
+  if (syncedLocation !== locationKey) {
+    setSyncedLocation(locationKey)
+    setMenuOpen(false)
+    setSearchOpen(false)
+  }
 
   useLayoutEffect(() => {
     if (location.hash) {
@@ -104,11 +78,6 @@ export function CustomerLayout() {
     }
   }, [location.pathname, location.search, location.hash])
 
-  useEffect(() => {
-    setMenuOpen(false)
-    setSearchOpen(false)
-  }, [location.pathname, location.search])
-
   return (
     <div className="site">
       <SkipLink />
@@ -121,10 +90,7 @@ export function CustomerLayout() {
       <SearchOverlay open={searchOpen} onClose={() => setSearchOpen(false)} />
       <CartDrawer open={cartOpen} onClose={closeCart} />
       <MobileNav open={menuOpen} onClose={() => setMenuOpen(false)} />
-      <BottomNav
-        onOpenSearch={() => setSearchOpen(true)}
-        onOpenCart={openCart}
-      />
+      <BottomNav />
     </div>
   )
 }

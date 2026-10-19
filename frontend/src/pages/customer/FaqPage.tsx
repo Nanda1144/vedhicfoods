@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { PageHeader, Accordion, ButtonLink, Skeleton } from '@/components/common'
+import { PageHeader, Accordion, ButtonLink, Skeleton, EmptyState, ErrorState } from '@/components/common'
 import { contentService } from '@/services/contentService'
 import { useAsync } from '@/hooks'
 
@@ -47,6 +47,18 @@ export function FaqPage() {
                 <Skeleton key={index} style={{ width: '100%', height: 56 }} />
               ))}
             </div>
+          ) : loaded.error ? (
+            <ErrorState
+              title="We couldn't load the FAQs"
+              description={loaded.error.message || 'Please try again in a moment.'}
+              onRetry={() => void loaded.run().catch(() => {})}
+            />
+          ) : groups.length === 0 ? (
+            <EmptyState
+              title="No FAQs yet"
+              description="Our help content is being updated. Reach out and we'll answer you directly."
+              action={<ButtonLink to="/contact" variant="outline">Contact support</ButtonLink>}
+            />
           ) : (
             groups.map(([category, items]) => (
             <div

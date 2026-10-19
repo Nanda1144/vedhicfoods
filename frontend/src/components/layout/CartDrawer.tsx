@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useCart } from '@/context'
 import { formatCurrency } from '@/utils/format'
-import { Icon, Drawer, Button, QuantitySelector, EmptyState } from '../common'
+import { Icon, Drawer, Badge, Button, QuantitySelector, EmptyState } from '../common'
 
 interface CartDrawerProps {
   open: boolean
@@ -16,14 +16,17 @@ export function CartDrawer({ open, onClose }: CartDrawerProps) {
   const [couponInput, setCouponInput] = useState('')
   const [couponState, setCouponState] = useState<'idle' | 'checking' | 'error' | 'ok'>('idle')
   const [couponMessage, setCouponMessage] = useState('')
+  const [wasOpen, setWasOpen] = useState(open)
 
-  useEffect(() => {
+  // Clear the coupon form each time the drawer opens (render-time reset).
+  if (wasOpen !== open) {
+    setWasOpen(open)
     if (open) {
       setCouponInput('')
       setCouponState('idle')
       setCouponMessage('')
     }
-  }, [open])
+  }
 
   const handleApplyCoupon = async () => {
     if (!couponInput.trim()) return
@@ -68,36 +71,51 @@ export function CartDrawer({ open, onClose }: CartDrawerProps) {
       ) : (
         <>
           <ul className="cart-drawer__lines">
-            {items.map((item) => (
-              <li key={item.id} className="cart-line">
-                <Link to={`/product/${item.slug}`} onClick={onClose} className="cart-line__media">
-                  <img src={item.image} alt="" loading="lazy" />
-                </Link>
-                <div className="cart-line__body">
-                  <div className="row row--between">
-                    <Link to={`/product/${item.slug}`} onClick={onClose} className="cart-line__name">
-                      {item.name}
-                    </Link>
-                    <button
-                      type="button"
-                      className="cart-line__remove icon-btn"
-                      onClick={() => remove(item.id)}
-                      aria-label={`Remove ${item.name}`}
-                    >
-                      <Icon name="trash" size={15} />
-                    </button>
-                  </div>
-                  <p className="cart-line__meta">{item.unit}</p>
-                  <div className="row row--between">
-                    <QuantitySelector value={item.quantity} max={item.stock} onChange={(qty) => updateQuantity(item.id, qty)} size="sm" />
-                    <div className="cart-line__price">
-                      <span>{formatCurrency(item.price * item.quantity)}</span>
-                      {item.mrp > item.price && <del>{formatCurrency(item.mrp)}</del>}
+            {items.map((item) => {
+              const outOfStock = item.isOutOfStock === true
+              const lackingStock = !outOfStock && item.hasInsufficientStock === true
+              return (
+                <li key={item.id} className="cart-line">
+                  <Link to={`/product/${item.slug}`} onClick={onClose} className="cart-line__media">
+                    <img src={item.image} alt="" loading="lazy" />
+                  </Link>
+                  <div className="cart-line__body">
+                    <div className="row row--between">
+                      <Link to={`/product/${item.slug}`} onClick={onClose} className="cart-line__name">
+                        {item.name}
+                      </Link>
+                      <button
+                        type="button"
+                        className="cart-line__remove icon-btn"
+                        onClick={() => remove(item.id)}
+                        aria-label={`Remove ${item.name}`}
+                      >
+                        <Icon name="trash" size={15} />
+                      </button>
+                    </div>
+                    <p className="cart-line__meta">{item.unit}</p>
+                    {(outOfStock || lackingStock || item.priceChanged) && (
+                      <div className="cart-line__flags">
+                        {outOfStock && <Badge tone="danger">Out of stock</Badge>}
+                        {lackingStock && (
+                          <Badge tone="warning">
+                            {item.availableQuantity != null ? `Only ${item.availableQuantity} left` : 'Low stock'}
+                          </Badge>
+                        )}
+                        {item.priceChanged && <span className="cart-line__notice">Price updated</span>}
+                      </div>
+                    )}
+                    <div className="row row--between">
+                      <QuantitySelector value={item.quantity} max={item.stock} disabled={outOfStock} onChange={(qty) => updateQuantity(item.id, qty)} size="sm" />
+                      <div className="cart-line__price">
+                        <span>{formatCurrency(item.price * item.quantity)}</span>
+                        {item.mrp > item.price && <del>{formatCurrency(item.mrp)}</del>}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </li>
-            ))}
+                </li>
+              )
+            })}
           </ul>
 
           {!coupon && (

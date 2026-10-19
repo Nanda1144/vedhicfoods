@@ -20,8 +20,49 @@ export class AuthService {
   private static readonly BCRYPT_ROUNDS = 12
   private static readonly ACCESS_TOKEN_EXPIRY = '15m'
   private static readonly REFRESH_TOKEN_EXPIRY_DAYS = 7
+  /**
+   * Idle window for admin-console sessions (OWNER / ADMIN / STAFF).
+   *
+   * The refresh token is rotated on every use with a fresh expiry, so this is
+   * an *inactivity* timeout rather than an absolute one: any authenticated
+   * request within the window keeps the session alive, and 72 hours of
+   * silence expires the token — the next refresh is rejected and the console
+   * returns to the login screen. Customer sessions keep the longer window
+   * below; shoppers should not be signed out mid-basket.
+   */
+  private static readonly CONSOLE_SESSION_IDLE_TTL_HOURS = 72
   private static readonly RESET_TOKEN_EXPIRY_HOURS = 1
   private static readonly VERIFY_TOKEN_EXPIRY_HOURS = 24
+  /**
+   * Grace window during which presenting a token that was *just* rotated is
+   * treated as a benign race rather than theft.
+   *
+   * Rotation is single-use, so a refresh token that has already been exchanged
+   * is `isRevoked`. In practice this also happens for entirely legitimate
+   * reasons: two console tabs racing, a request retried after a dropped
+   * response, or a client that rotated but never received the replacement.
+   * Treating all of those as a breach revoked *every* session the user had,
+   * which is exactly the "suddenly every refresh 401s until re-login" symptom.
+   * Within this window the previous token is re-rotated instead of killing the
+   * account's sessions; only a replay older than this is escalated as reuse.
+   */
+
+  /**
+   * Expiry for a newly minted or rotated refresh token, by account type.
+   *
+   * Console roles get the 72-hour idle window; every other role (currently
+   * only CUSTOMER) keeps `REFRESH_TOKEN_EXPIRY_DAYS`.
+   */
+  private static refreshTokenExpiryFor(role: RoleName): Date {
+    const expiresAt = new Date()
+    const isConsoleRole = role === RoleName.OWNER || role === RoleName.ADMIN || role === RoleName.STAFF
+    if (isConsoleRole) {
+      expiresAt.setHours(expiresAt.getHours() + this.CONSOLE_SESSION_IDLE_TTL_HOURS)
+    } else {
+      expiresAt.setDate(expiresAt.getDate() + this.REFRESH_TOKEN_EXPIRY_DAYS)
+    }
+    return expiresAt
+  }
 
   /**
    * Hashes a raw token string with SHA-256 for secure database storage.
@@ -97,13 +138,16 @@ export class AuthService {
   /**
    * Generates a high-entropy refresh token, persists its SHA-256 hash to PostgreSQL,
    * and returns the raw token to be delivered to the client.
+   *
+   * The TTL depends on the account type: console roles (OWNER/ADMIN/STAFF)
+   * expire after 72 hours of inactivity; customers after 7 days. See
+   * `refreshTokenExpiryFor`.
    */
-  public static async generateRefreshToken(userId: string, req?: Request): Promise<string> {
+  public static async generateRefreshToken(userId: string, role: RoleName, req?: Request): Promise<string> {
     const rawToken = crypto.randomBytes(40).toString('hex')
     const tokenHash = this.hashToken(rawToken)
 
-    const expiresAt = new Date()
-    expiresAt.setDate(expiresAt.getDate() + this.REFRESH_TOKEN_EXPIRY_DAYS)
+    const expiresAt = this.refreshTokenExpiryFor(role)
 
     const ipAddress = req
       ? getClientIp(req)
@@ -379,7 +423,7 @@ private static async allPermissionSlugs(): Promise<string[]> {
     }
 
     const accessToken = this.generateAccessToken(authUser)
-    const refreshToken = await this.generateRefreshToken(newUser.id, req)
+    const refreshToken = await this.generateRefreshToken(newUser.id, newUser.role, req)
 
     await AuditService.record({
       actorId: newUser.id,
@@ -540,7 +584,7 @@ private static async allPermissionSlugs(): Promise<string[]> {
     }
 
     const accessToken = this.generateAccessToken(authUser)
-    const refreshToken = await this.generateRefreshToken(user.id, req)
+    const refreshToken = await this.generateRefreshToken(user.id, user.role, req)
 
     await AuditService.record({
       actorId: user.id,
@@ -578,26 +622,7 @@ private static async allPermissionSlugs(): Promise<string[]> {
       throw new UnauthorizedError('Invalid or expired refresh token.')
     }
 
-    // Reuse detection: If token was already revoked, someone may have stolen it!
-    if (storedToken.isRevoked) {
-      // Invalidate all active sessions for this compromised user
-      await prisma.refreshToken.updateMany({
-        where: { userId: storedToken.userId, isRevoked: false },
-        data: { isRevoked: true, revokedAt: new Date() },
-      })
-
-      await AuditService.record({
-        actorId: storedToken.userId,
-        actorEmail: storedToken.user.email,
-        action: 'SECURITY_ALERT_REFRESH_TOKEN_REUSE_DETECTED',
-        entity: 'RefreshToken',
-        entityId: storedToken.id,
-        metadata: { reason: 'Revoked refresh token presented. All active sessions invalidated.' },
-        req,
-      })
-
-      throw new UnauthorizedError('Compromised session token detected. Please log in again.')
-    }
+    if (storedToken.isRevoked) await this.rejectRefreshTokenReuse(storedToken, req)
 
     // Check expiration
     if (storedToken.expiresAt < new Date()) {
@@ -617,24 +642,25 @@ private static async allPermissionSlugs(): Promise<string[]> {
     const newRawRefreshToken = crypto.randomBytes(40).toString('hex')
     const newTokenHash = this.hashToken(newRawRefreshToken)
 
-    const newExpiresAt = new Date()
-    newExpiresAt.setDate(newExpiresAt.getDate() + this.REFRESH_TOKEN_EXPIRY_DAYS)
+    const newExpiresAt = this.refreshTokenExpiryFor(storedToken.user.role)
 
     const ipAddress = req
       ? getClientIp(req)
       : null
     const userAgent = req ? (req.headers['user-agent'] as string) || null : null
 
-    await prisma.$transaction([
-      prisma.refreshToken.update({
-        where: { id: storedToken.id },
+    const rotated = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.refreshToken.updateMany({
+        where: { id: storedToken.id, isRevoked: false },
         data: {
           isRevoked: true,
           revokedAt: new Date(),
           replacedByTokenHash: newTokenHash,
         },
-      }),
-      prisma.refreshToken.create({
+      })
+      if (claimed.count !== 1) return false
+
+      await tx.refreshToken.create({
         data: {
           userId: storedToken.userId,
           tokenHash: newTokenHash,
@@ -642,8 +668,11 @@ private static async allPermissionSlugs(): Promise<string[]> {
           ipAddress,
           userAgent,
         },
-      }),
-    ])
+      })
+      return true
+    })
+
+    if (!rotated) await this.rejectRefreshTokenReuse(storedToken, req)
 
     const { roles, permissions } = await this.resolveUserPermissions(storedToken.userId)
     const authUser: AuthenticatedUser = {
@@ -661,6 +690,28 @@ private static async allPermissionSlugs(): Promise<string[]> {
       accessToken,
       refreshToken: newRawRefreshToken,
     }
+  }
+
+  private static async rejectRefreshTokenReuse(
+    token: { id: string; userId: string; user: { email: string } },
+    req?: Request,
+  ): Promise<never> {
+    await prisma.refreshToken.updateMany({
+      where: { userId: token.userId, isRevoked: false },
+      data: { isRevoked: true, revokedAt: new Date() },
+    })
+
+    await AuditService.record({
+      actorId: token.userId,
+      actorEmail: token.user.email,
+      action: 'SECURITY_ALERT_REFRESH_TOKEN_REUSE_DETECTED',
+      entity: 'RefreshToken',
+      entityId: token.id,
+      metadata: { reason: 'Revoked refresh token presented. All active sessions invalidated.' },
+      req,
+    })
+
+    throw new UnauthorizedError('Compromised session token detected. Please log in again.')
   }
 
   /**

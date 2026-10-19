@@ -104,7 +104,7 @@ export function AdminSecurityPage() {
       <section className="admin-card">
         <header className="admin-card__head">
           <h2>Change password</h2>
-          <span className="admin-card__hint">prototype — shared demo password</span>
+          <span className="admin-card__hint">Minimum 8 characters</span>
         </header>
         <form className="admin-form" onSubmit={submit} noValidate style={{ maxWidth: 480 }}>
           <Field label="Current password" required>

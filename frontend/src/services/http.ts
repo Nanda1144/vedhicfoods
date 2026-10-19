@@ -5,7 +5,6 @@
  * Base URL comes from VITE_API_URL; production builds are pinned to the
  * load-balanced backend by the guard in vite.config.ts.
  * Automatically injects JWT Bearer tokens for authenticated requests.
- * No automatic mock fallback — callers explicitly choose skipApi/fallback behavior.
  */
 
 import { tokenStore } from './tokenStore'
@@ -58,14 +57,8 @@ function resolveApiBaseUrl(): string {
 export const API_BASE_URL = resolveApiBaseUrl()
 
 export interface RequestOptions {
-  /** Simulated network latency in ms (used during fallback). */
-  delay?: number
-  /** 0–1 chance of a simulated failure. */
-  failRate?: number
   /** AbortSignal lets callers cancel in-flight requests. */
   signal?: AbortSignal
-  /** Skip real API and force local mock execution. */
-  skipApi?: boolean
   /**
    * Anonymous order-access token minted by the checkout response. Sent as
    * `X-Order-Token` so a guest can initiate/verify payment and read their own
@@ -85,29 +78,6 @@ export class ServiceError extends Error {
     this.name = 'ServiceError'
     this.code = code
   }
-}
-
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms)
-    signal?.addEventListener('abort', () => {
-      clearTimeout(timer)
-      reject(new ServiceError('ABORTED', 'Request was cancelled.'))
-    })
-  })
-}
-
-/** Resolves with a deep-ish clone so callers cannot mutate the mock store. */
-export async function mockRequest<T>(
-  resolver: () => T,
-  { delay = 260, failRate = 0 }: RequestOptions = {},
-): Promise<T> {
-  await sleep(delay)
-  if (failRate > 0 && Math.random() < failRate) {
-    throw new ServiceError('NETWORK', 'Something went wrong. Please try again.')
-  }
-  const value = resolver()
-  return (typeof structuredClone === 'function' ? structuredClone(value) : value) as T
 }
 
 export function notFound(entity: string, id: string): never {
@@ -143,11 +113,6 @@ export function resolveAuth(): ResolvedAuth {
   return { token: null, source: null }
 }
 
-/** Get stored JWT access token (admin or customer). */
-export function getAuthToken(): string | null {
-  return resolveAuth().token
-}
-
 /**
  * Extracts a human-readable message from the backend's error bodies.
  *
@@ -170,38 +135,39 @@ function extractErrorMessage(payload: unknown, fallback: string): string {
 }
 
 /**
- * Exchanges the stored refresh token for a new access token (single-flight, so
+ * Exchanges the HttpOnly refresh cookie for a new access token (single-flight, so
  * a burst of 401s produces exactly one rotation). Returns false when there is
  * no refresh token or the rotation was rejected — the caller then surfaces the
  * original 401 and AuthContext clears the session.
  */
 let inflightRefresh: Promise<boolean> | null = null
 
-function refreshCustomerSession(): Promise<boolean> {
+function rotateCustomerSession(): Promise<boolean> {
   if (!inflightRefresh) {
     inflightRefresh = (async () => {
-      const refreshToken = tokenStore.getRefreshToken()
-      if (!refreshToken) return false
-
       try {
         const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken }),
+          credentials: 'include',
         })
         if (!response.ok) {
-          tokenStore.clear()
-          tokenStore.emitExpired()
+          // Provider outages, rate limits and timeouts are recoverable. Only
+          // a definite credential rejection should end the local session.
+          if (response.status < 500 && response.status !== 408 && response.status !== 429) {
+            tokenStore.clear()
+            tokenStore.emitExpired()
+          }
           return false
         }
-        const json = (await response.json()) as { accessToken?: string; token?: string; refreshToken?: string }
+        const json = (await response.json()) as { accessToken?: string; token?: string }
         const accessToken = json.accessToken || json.token
         if (!accessToken) {
           tokenStore.clear()
           tokenStore.emitExpired()
           return false
         }
-        tokenStore.setTokens(accessToken, json.refreshToken || refreshToken)
+        tokenStore.setTokens(accessToken)
         return true
       } catch {
         // Network failure: keep the session — the next request will retry.
@@ -212,6 +178,33 @@ function refreshCustomerSession(): Promise<boolean> {
     })()
   }
   return inflightRefresh
+}
+
+interface CustomerRefreshLockManager {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>
+}
+
+let crossTabRefresh: Promise<boolean> | null = null
+
+function refreshCustomerSession(failedAccessToken: string | null): Promise<boolean> {
+  if (crossTabRefresh) return crossTabRefresh
+
+  const rotate = async (): Promise<boolean> => {
+    // Another tab may have completed the cookie rotation while this request
+    // waited for the cross-tab lock. Reuse its access token instead.
+    const currentToken = resolveAuth().token
+    if (failedAccessToken && currentToken && currentToken !== failedAccessToken) return true
+    return rotateCustomerSession()
+  }
+  const locks =
+    typeof navigator !== 'undefined'
+      ? (navigator as unknown as { locks?: CustomerRefreshLockManager }).locks
+      : undefined
+
+  crossTabRefresh = (locks ? locks.request('vedhic:customer:refresh', rotate) : rotate()).finally(() => {
+    crossTabRefresh = null
+  })
+  return crossTabRefresh
 }
 
 /** Real HTTP client to communicate with the Vedhic Foods backend. */
@@ -246,11 +239,24 @@ export async function apiFetch<T>(
   const timeoutId = setTimeout(() => controller.abort(), 60_000)
 
   try {
-    const response = await fetch(url, {
-      ...init,
-      headers,
-      signal: options?.signal || controller.signal,
-    })
+    let response: Response
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers,
+        credentials: 'include',
+        signal: options?.signal || controller.signal,
+      })
+    } catch (error) {
+      // Surface a human message instead of the raw browser string "Failed to fetch".
+      if (error instanceof Error && error.name === 'AbortError') {
+        if (options?.signal?.aborted) {
+          throw new ServiceError('CANCELLED', 'The request was cancelled.')
+        }
+        throw new ServiceError('TIMEOUT', 'This is taking longer than expected. Please try again.')
+      }
+      throw new ServiceError('NETWORK', 'We could not reach the server. Check your connection and try again.')
+    }
 
     clearTimeout(timeoutId)
 
@@ -260,10 +266,9 @@ export async function apiFetch<T>(
       if (
         response.status === 401 &&
         resolveAuth().source === 'customer' &&
-        tokenStore.getRefreshToken() &&
         !options?.__retried
       ) {
-        const refreshed = await refreshCustomerSession()
+        const refreshed = await refreshCustomerSession(token)
         if (refreshed) {
           return apiFetch<T>(endpoint, init, { ...(options ?? {}), __retried: true })
         }
@@ -278,12 +283,96 @@ export async function apiFetch<T>(
       throw new ServiceError(String(response.status), errMsg)
     }
 
-    const result = await response.json()
+    // 204 No Content (and any empty body) is valid for void/DELETE endpoints;
+    // `response.json()` would reject on the empty stream.
+    if (response.status === 204) return undefined as T
+
+    const raw = await response.text()
+    if (!raw) return undefined as T
+
+    const result = JSON.parse(raw) as unknown
     // If backend wraps in standard format { success: true, data: ... }
     if (result && typeof result === 'object' && 'data' in result) {
-      return result.data as T
+      return (result as { data: T }).data
     }
     return result as T
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
+/**
+ * Fetches a binary response (e.g. a streamed invoice PDF).
+ *
+ * Mirrors `apiFetch`'s auth injection (bearer token or `X-Order-Token`) and its
+ * single retry after a customer token refresh. Use this rather than opening a
+ * storage URL directly: it keeps document downloads working when object storage
+ * is unavailable (the dev fallback returned a URL to a non-existent bucket,
+ * which the browser rendered as an S3 `NoSuchBucket` XML page).
+ */
+export async function apiFetchBlob(
+  endpoint: string,
+  init?: RequestInit,
+  options?: RequestOptions,
+): Promise<Blob> {
+  const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
+  const requestId = crypto.randomUUID()
+
+  const headers: Record<string, string> = {
+    'x-request-id': requestId,
+    ...(init?.headers as Record<string, string>),
+  }
+
+  const token = resolveAuth().token
+  if (token && !headers['Authorization']) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  if (options?.orderToken && !headers['Authorization']) {
+    headers['X-Order-Token'] = options.orderToken
+  }
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 60_000)
+
+  try {
+    let response: Response
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers,
+        credentials: 'include',
+        signal: options?.signal || controller.signal,
+      })
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        if (options?.signal?.aborted) {
+          throw new ServiceError('CANCELLED', 'The request was cancelled.')
+        }
+        throw new ServiceError('TIMEOUT', 'This is taking longer than expected. Please try again.')
+      }
+      throw new ServiceError('NETWORK', 'We could not reach the server. Check your connection and try again.')
+    }
+
+    clearTimeout(timeoutId)
+
+    if (!response.ok) {
+      if (response.status === 401 && resolveAuth().source === 'customer' && !options?.__retried) {
+        const refreshed = await refreshCustomerSession(token)
+        if (refreshed) {
+          return apiFetchBlob(endpoint, init, { ...(options ?? {}), __retried: true })
+        }
+      }
+
+      let errMsg = `Request failed with status ${response.status}`
+      try {
+        errMsg = extractErrorMessage(await response.json(), errMsg)
+      } catch {
+        // response wasn't JSON
+      }
+      throw new ServiceError(String(response.status), errMsg)
+    }
+
+    return response.blob()
   } finally {
     clearTimeout(timeoutId)
   }

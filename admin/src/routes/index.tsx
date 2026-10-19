@@ -1,5 +1,5 @@
 import { lazy, useEffect, type ComponentType, type ReactNode } from 'react'
-import { createBrowserRouter, type RouteObject } from 'react-router-dom'
+import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-dom'
 import { AdminLayout, RequireAdmin } from '@/components/admin'
 import { AdminNotFoundPage } from '@/pages/admin/AdminNotFoundPage'
 import { RouteErrorPage } from '@/pages/admin/RouteErrorPage'
@@ -71,6 +71,11 @@ const adminChildren: RouteObject[] = [
   { path: 'products', element: guarded(AdminProductsPage, 'Products · Vedhic Admin', 'products.read') },
   { path: 'products/compare', element: guarded(AdminProductsPage, 'Products · Vedhic Admin', 'products.read') },
   { path: 'products/archive', element: guarded(AdminProductsPage, 'Products · Vedhic Admin', 'products.read') },
+  // AdminProductsPage drives its create modal from `?action=new` (not a path
+  // param) and has no URL-driven edit-by-id, so these resolve via redirect
+  // rather than 404. Placed after the static `products/*` routes.
+  { path: 'products/new', element: <Navigate to="/admin/products?action=new" replace /> },
+  { path: 'products/:id', element: <Navigate to="/admin/products" replace /> },
   { path: 'inventory', element: guarded(AdminInventoryPage, 'Inventory · Vedhic Admin', 'inventory.read') },
   { path: 'orders', element: guarded(AdminOrdersPage, 'Orders · Vedhic Admin', 'orders.read') },
   { path: 'orders/:id', element: guarded(AdminOrdersPage, 'Order detail · Vedhic Admin', 'orders.read') },

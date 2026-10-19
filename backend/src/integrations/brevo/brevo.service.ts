@@ -144,9 +144,9 @@ export class BrevoEmailService {
   }
 
   /**
-   * Dispatches a transactional email directly through the Brevo (Sendinblue) API v3.
-   * Returns false instead of throwing, for callers that treat delivery as
-   * best-effort and already handle a missing key by simulating.
+   * Dispatches an email, optionally with an attachment, through Brevo.
+   * Provider failures keep their retry classification so the transactional
+   * queue cannot mistake a failed invoice for a successful delivery.
    */
   public static async sendEmail(options: SendBrevoEmailOptions): Promise<boolean> {
     // Never contact the provider in local dev without a key, or under test.
@@ -186,7 +186,12 @@ export class BrevoEmailService {
       return true
     } catch (err: any) {
       logger.error({ error: err.message }, 'Exception while calling Brevo API')
-      return false
+      if (err instanceof EmailDeliveryError) throw err
+      throw new EmailDeliveryError('Email attachment delivery failed', {
+        provider: 'brevo',
+        retryable: true,
+        cause: err,
+      })
     }
   }
 }

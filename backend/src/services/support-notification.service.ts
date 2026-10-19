@@ -244,7 +244,8 @@ export class SupportNotificationService {
   public static async notifyCustomerOfStaffReply(params: {
     ticketId: string
     ticketNumber: string
-    messageId: string
+    messageId: string | null
+    eventKey?: string
     subject: string
     message: string
     staffName: string
@@ -283,7 +284,7 @@ export class SupportNotificationService {
       subject: `[${params.ticketNumber}] Reply from Vedhic Foods Support`.slice(0, 200),
       html,
       text,
-      eventKey: `MESSAGE_CREATED:${params.messageId}`,
+      eventKey: params.eventKey ?? `MESSAGE_CREATED:${params.messageId}`,
       actorEmail: params.actorEmail ?? null,
     })
   }
@@ -295,7 +296,8 @@ export class SupportNotificationService {
   public static async notifyStaffOfCustomerReply(params: {
     ticketId: string
     ticketNumber: string
-    messageId: string
+    messageId: string | null
+    eventKey?: string
     subject: string
     message: string
     customerName: string
@@ -328,7 +330,7 @@ export class SupportNotificationService {
       subject: `[${params.ticketNumber}] Customer reply: ${params.subject}`.slice(0, 200),
       html,
       text,
-      eventKey: `MESSAGE_CREATED:${params.messageId}`,
+      eventKey: params.eventKey ?? `MESSAGE_CREATED:${params.messageId}`,
       actorEmail: params.actorEmail ?? null,
     })
   }

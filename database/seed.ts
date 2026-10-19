@@ -485,6 +485,7 @@ async function main() {
     { key: 'website_hero_subtitle', category: SettingCategory.WEBSITE, value: 'Handcrafted millet laddus, ragi roti and heritage organic grains — sourced directly from trusted Indian farms and made in small batches.', description: 'Storefront hero supporting copy', isPublic: true },
     { key: 'website_hero_cta_label', category: SettingCategory.WEBSITE, value: 'Shop now', description: 'Hero call-to-action button label', isPublic: true },
     { key: 'website_hero_images', category: SettingCategory.WEBSITE, value: '[]', description: 'JSON array of hero background image URLs (admin managed; the storefront auto-discovers frontend/src/assets/hero as the fallback)', isPublic: true },
+    { key: 'website_story_enabled', category: SettingCategory.WEBSITE, value: 'false', description: 'Whether the homepage "Our Story" milestones section is shown (admin toggled, disabled by default)', isPublic: true },
     { key: 'website_social_links', category: SettingCategory.SEO, value: '[{"platform":"instagram","label":"Instagram","href":"https://instagram.com"},{"platform":"facebook","label":"Facebook","href":"https://facebook.com"}]', description: 'JSON array of social profile links rendered in the footer', isPublic: true },
   ]
 

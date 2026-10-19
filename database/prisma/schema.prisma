@@ -29,6 +29,7 @@ model User {
   profile                 CustomerProfile?
   deliveries              Delivery[]               @relation("StaffDeliveries")
   deliveryHistoryEntries  DeliveryHistory[]
+  assignedDeliveryHistory DeliveryHistory[] @relation("DeliveryAssignedTo")
   emailVerificationTokens EmailVerificationToken[]
   inventoryLogs           InventoryLog[]
   invoices                Invoice[]
@@ -41,6 +42,7 @@ model User {
   customerTickets         SupportTicket[]          @relation("CustomerTickets")
   userRoles               UserRole[]
   userPermissions         UserPermission[]
+  productReviews          ProductReview[]
 
   @@index([email])
   @@index([phone])
@@ -161,10 +163,12 @@ model Address {
   type      AddressType @default(HOME)
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   orders    Order[]
+  ordersByOwner Order[]  @relation("OrderAddressOwner")
 
   @@index([userId])
   @@index([pincode])
   @@index([isDeleted])
+  @@unique([id, userId], map: "addresses_id_user_id_key")
   @@map("addresses")
 }
 
@@ -230,6 +234,13 @@ model Product {
   metaDescription   String?
   metaKeywords      String[]           @default([])
   metaTitle         String?
+  // PostgreSQL full-text search column. `Unsupported` because Prisma has no
+  // native `tsvector` type: the field is excluded from the generated client
+  // (never selected or written) and exists so Prisma tracks the GIN index
+  // below. The column is a STORED generated column created by migration
+  // 20261014000000_product_full_text_search, maintained by PostgreSQL itself
+  // from name + shortDescription + description + tags + sku.
+  searchVector      Unsupported("tsvector")? @map("search_vector")
   status            ProductStatus      @default(PUBLISHED)
   cartItems         CartItem[]
   couponProducts    CouponProduct[]
@@ -248,6 +259,12 @@ model Product {
   @@index([status])
   @@index([isDeleted])
   @@index([price])
+  @@index([searchVector], type: Gin)
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "products_name_trgm_idx")
+  @@index([shortDescription(ops: raw("gin_trgm_ops"))], type: Gin, map: "products_shortDescription_trgm_idx")
+  @@index([description(ops: raw("gin_trgm_ops"))], type: Gin, map: "products_description_trgm_idx")
+  @@index([sku(ops: raw("gin_trgm_ops"))], type: Gin, map: "products_sku_trgm_idx")
+  @@index([tags(ops: ArrayOps)], type: Gin, map: "products_tags_gin_idx")
   @@map("products")
 }
 
@@ -262,6 +279,7 @@ model ProductImage {
   s3Key        String?
   product      Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
+  @@unique([productId, s3Key], map: "product_images_productId_s3Key_key")
   @@index([productId])
   @@index([isPrimary])
   @@map("product_images")
@@ -303,12 +321,14 @@ model InventoryLog {
   actor            User?     @relation(fields: [actorId], references: [id])
   inventory        Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
   product          Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  order            Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull, map: "inventory_logs_order_id_fkey")
 
   @@index([inventoryId])
   @@index([productId])
   @@index([actorId])
   @@index([operation])
   @@index([createdAt])
+  @@index([orderId], map: "inventory_logs_order_id_idx")
   @@map("inventory_logs")
 }
 
@@ -374,9 +394,15 @@ model Order {
   invoice                 Invoice?
   items                   OrderItem[]
   address                 Address?      @relation(fields: [addressId], references: [id])
+  addressOwnerCheck       Address?      @relation("OrderAddressOwner", fields: [addressId, userId], references: [id, userId], onDelete: NoAction, map: "orders_address_owner_fkey")
   user                    User          @relation(fields: [userId], references: [id])
   payment                 Payment?
+  inventoryLogs           InventoryLog[]
+  couponUsages            CouponUsage[]
+  couponUsageOwners       CouponUsage[] @relation("CouponUsageOrderOwner")
+  invoiceOwnerCheck       Invoice?      @relation("InvoiceOrderOwner")
 
+  @@unique([id, userId], map: "orders_id_user_id_key")
   @@index([orderNumber])
   @@index([idempotencyKey])
   @@index([userId])
@@ -470,10 +496,13 @@ model CouponUsage {
   usedAt          DateTime @default(now())
   coupon          Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Restrict, map: "coupon_usages_order_id_fkey")
+  orderOwnerCheck Order    @relation("CouponUsageOrderOwner", fields: [orderId, userId], references: [id, userId], onDelete: NoAction, map: "coupon_usages_order_owner_fkey")
 
   @@unique([couponId, userId, orderId])
   @@index([couponId])
   @@index([userId])
+  @@index([orderId], map: "coupon_usages_order_id_idx")
   @@map("coupon_usages")
 }
 
@@ -573,12 +602,14 @@ model Invoice {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   order         Order         @relation(fields: [orderId], references: [id])
+  orderOwnerCheck Order       @relation("InvoiceOrderOwner", fields: [orderId, userId], references: [id, userId], onDelete: NoAction, map: "invoices_order_owner_fkey")
   user          User          @relation(fields: [userId], references: [id])
 
   @@index([invoiceNumber])
   @@index([orderId])
   @@index([userId])
   @@index([status])
+  @@unique([orderId, userId], map: "invoices_order_id_user_id_key")
   @@map("invoices")
 }
 
@@ -619,10 +650,12 @@ model DeliveryHistory {
   metadata     Json           @default("{}")
   createdAt    DateTime       @default(now())
   actor        User?          @relation(fields: [actorId], references: [id])
+  assignedTo   User?          @relation("DeliveryAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull, map: "delivery_history_assigned_to_id_fkey")
   delivery     Delivery       @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
 
   @@index([deliveryId])
   @@index([actorId])
+  @@index([assignedToId], map: "delivery_history_assigned_to_id_idx")
   @@index([status])
   @@index([createdAt])
   @@map("delivery_history")
@@ -646,7 +679,8 @@ model Notification {
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
-  @@index([userId, eventKey])
+  // The filtered unique index is managed by its SQL migration because this
+  // Prisma version cannot represent partial indexes in the data model.
   @@index([isRead])
   @@index([type])
   @@map("notifications")
@@ -699,6 +733,7 @@ model SupportMessage {
   metadata  Json          @default("{}")
   sender    User          @relation(fields: [senderId], references: [id], onDelete: Cascade)
   ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  notifications SupportNotification[]
 
   @@index([ticketId])
   @@index([ticketId, createdAt])
@@ -724,10 +759,12 @@ model SupportNotification {
   sentAt        DateTime?
   createdAt     DateTime                   @default(now())
   contact       ContactSubmission?         @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  message       SupportMessage?             @relation(fields: [messageId], references: [id], onDelete: SetNull, map: "support_notifications_message_id_fkey")
   ticket        SupportTicket?             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
   @@index([ticketId])
   @@index([contactId])
+  @@index([messageId], map: "support_notifications_message_id_idx")
   @@index([status])
   @@index([createdAt])
   @@map("support_notifications")
@@ -1094,8 +1131,10 @@ model ProductReview {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull, map: "product_reviews_user_id_fkey")
 
   @@index([productId, isApproved])
+  @@index([userId], map: "product_reviews_user_id_idx")
   @@index([isApproved, createdAt])
   @@map("product_reviews")
 }

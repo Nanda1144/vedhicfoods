@@ -1,8 +1,10 @@
 import { Request, Response } from 'express'
+import { PaymentMethod } from '@prisma/client'
 import { CheckoutService } from '../services/checkout.service'
 import { checkoutSchema, updateOrderStatusSchema } from '../types/checkout.types'
 import { logger } from '../config/logger'
 import { sendControllerError } from '../utils/api-response'
+import { isCodEnabled } from '../utils/cod-settings'
 
 export class CheckoutController {
   /**
@@ -24,6 +26,19 @@ export class CheckoutController {
           success: false,
           error: firstError,
           details: parsed.error.issues,
+        })
+        return
+      }
+
+      // STOREFRONT POLICY: Cash on Delivery is optional and admin-controlled.
+      // Reject COD unless an operator has explicitly enabled it. Razorpay is
+      // always available. Admin/delivery COD handling is not affected. Note
+      // `checkoutSchema` defaults a missing method to RAZORPAY, so an omitted
+      // method yields a pay-first order rather than silently accepting COD.
+      if (parsed.data.paymentMethod === PaymentMethod.COD && !(await isCodEnabled())) {
+        res.status(400).json({
+          success: false,
+          error: 'Cash on Delivery is not available right now. Please choose an online payment method.',
         })
         return
       }

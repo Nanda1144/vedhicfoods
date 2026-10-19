@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
 import { adminService } from '@/services/adminService'
 import { invoiceService } from '@/services/invoiceService'
 import { useAsync } from '@/hooks'
@@ -14,7 +13,6 @@ const PAGE_SIZE = 10
 
 export function AdminInvoicesPage() {
   const { push } = useToast()
-  const navigate = useNavigate()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [downloadedIds, setDownloadedIds] = useState<Set<string>>(() => {
@@ -49,15 +47,34 @@ export function AdminInvoicesPage() {
     }
   }, [data])
 
+  /**
+   * Opens or downloads a PDF blob without ever navigating to the storage
+   * origin. The bytes are streamed from the API with the admin's credentials.
+   */
+  const openPdfBlob = (blob: Blob, filename: string, download: boolean) => {
+    const url = URL.createObjectURL(blob)
+    if (download) {
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+    } else {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+    // Give the new tab/download a moment to consume the blob before releasing it.
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  }
+
   const handleDownload = async (invoice: Invoice) => {
     if (downloadedIds.has(invoice.id)) {
       push({ title: 'Already downloaded', description: `${invoice.invoiceNumber} has already been downloaded.` })
       return
     }
 
-    // Use the real API to get a signed download URL
     try {
-      const { downloadUrl } = await invoiceService.downloadUrl(invoice.id)
+      const blob = await invoiceService.fetchPdf(invoice.id)
       setDownloadedIds((prev) => {
         const next = new Set(prev)
         next.add(invoice.id)
@@ -68,13 +85,28 @@ export function AdminInvoicesPage() {
         }
         return next
       })
-      // `noopener` so the signed-URL PDF cannot reach back into the console tab.
-      window.open(downloadUrl, '_blank', 'noopener,noreferrer')
+      openPdfBlob(blob, `${invoice.invoiceNumber}.pdf`, true)
       push({ title: 'Download started', description: `Opening ${invoice.invoiceNumber}.` })
-    } catch {
-      // Fallback to view page
-      navigate(`/invoice/${invoice.id}`)
-      push({ title: 'Opening invoice', description: `Opening ${invoice.invoiceNumber} for download.` })
+    } catch (caught) {
+      push({
+        title: 'Could not download invoice',
+        description: caught instanceof Error ? caught.message : 'Please try again in a moment.',
+        tone: 'danger',
+      })
+    }
+  }
+
+  /** Opens the generated PDF from the API — no external storage navigation. */
+  const handleView = async (invoice: Invoice) => {
+    try {
+      const blob = await invoiceService.fetchPdf(invoice.id)
+      openPdfBlob(blob, `${invoice.invoiceNumber}.pdf`, false)
+    } catch (caught) {
+      push({
+        title: 'Could not open invoice',
+        description: caught instanceof Error ? caught.message : 'Please try again in a moment.',
+        tone: 'danger',
+      })
     }
   }
 
@@ -114,9 +146,9 @@ export function AdminInvoicesPage() {
         const isDownloaded = downloadedIds.has(invoice.id)
         return (
           <span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
-            <Link to={`/invoice/${invoice.id}`} target="_blank" className="button button--sm button--ghost">
-              <span>View</span>
-            </Link>
+            <Button size="sm" variant="ghost" onClick={() => handleView(invoice)}>
+              View
+            </Button>
             {isDownloaded ? (
               <Badge tone="success" className="admin-invoice-downloaded">
                 <Icon name="check" size={14} /> Downloaded

@@ -106,6 +106,7 @@ export function AdminSettingsPage() {
         businessHours: visible.businessHours,
         supportEmail: visible.supportEmail,
         supportPhone: visible.supportPhone,
+        storyEnabled: visible.storyEnabled,
       })
       push({ title: 'Settings saved', description: 'Storefront settings are up to date.' })
     } catch (caught) {
@@ -161,6 +162,20 @@ export function AdminSettingsPage() {
           <Field label="Announcement text">
             <Textarea rows={2} value={visible.announcement} onChange={(event) => update('announcement', event.target.value)} />
           </Field>
+        </section>
+
+        <section className="admin-card admin-form__section">
+          <p className="admin-form__section-title">Homepage sections</p>
+          <div className="row" style={{ gap: 12 }}>
+            <Switch
+              label="Show the “Our Story” section"
+              checked={visible.storyEnabled}
+              onCheckedChange={(value) => update('storyEnabled', value)}
+            />
+          </div>
+          <p className="admin-muted" style={{ margin: 'var(--space-2) 0 0' }}>
+            Disabled by default. Turn on to display the milestones timeline on the storefront homepage.
+          </p>
         </section>
 
         <section className="admin-card admin-form__section">

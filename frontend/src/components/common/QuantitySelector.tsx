@@ -16,7 +16,7 @@ interface QuantitySelectorProps {
 export function QuantitySelector({
   value,
   min = 1,
-  max = 99,
+  max = 100,
   onChange,
   size = 'md',
   disabled = false,

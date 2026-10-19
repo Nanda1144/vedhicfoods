@@ -29,6 +29,8 @@ export interface Product {
   slug: string
   name: string
   categorySlug: string
+  /** Authoritative category name supplied by the API payload. */
+  categoryName?: string
   shortDescription: string
   description: string
   /** Selling price in the smallest currency unit avoided — plain INR value. */

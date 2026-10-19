@@ -1,13 +1,16 @@
 import { emailTransport } from '../integrations/email/email-transport'
-import { isRetryableEmailError } from '../integrations/email/email-errors'
+import { EmailDeliveryError, isRetryableEmailError } from '../integrations/email/email-errors'
 import { EmailSuppressionService } from '../integrations/email/email-suppression.service'
 import { logger } from '../config/logger'
 import { env } from '../config/env'
+import { BRANDING } from '../config/branding'
 import { EmailTemplates, TemplateVariables } from '../templates/email-templates'
 
 export interface QueuedEmail {
   id: string
   to: string | string[]
+  /** Display name for the recipient; falls back to the address. */
+  toName?: string
   subject: string
   htmlBody: string
   textBody?: string
@@ -22,6 +25,12 @@ export interface QueuedEmail {
   error?: string
   /** Idempotency key; a second enqueue with the same key is dropped. */
   dedupeKey?: string
+  /**
+   * Optional file attached to the message (base64 content). Present only for
+   * invoice emails; a queued message with an attachment is delivered through the
+   * attachment transport, which SES implements with `SendRawEmail`.
+   */
+  attachment?: { name: string; content: string }
 }
 
 export interface EmailEvent {
@@ -170,6 +179,10 @@ export class EmailQueue {
           } else if (email.attempts >= email.maxAttempts) {
             email.status = 'failed'
             logger.error({ id: email.id, error: error.message, attempts: email.attempts }, 'Email failed after max retries')
+            // A failed delivery must not reserve its idempotency key forever;
+            // an operator or a later lifecycle dispatch can retry after the
+            // provider problem has been corrected.
+            if (email.dedupeKey) EmailQueue.recentlySent.delete(email.dedupeKey)
           } else {
             email.status = 'pending'
             const delay = EmailQueue.calculateExponentialBackoff(email.attempts)
@@ -194,6 +207,24 @@ export class EmailQueue {
   }
 
   private static async attemptSend(email: QueuedEmail): Promise<void> {
+    if (email.attachment) {
+      const toEmail = Array.isArray(email.to) ? email.to[0] : email.to
+      const sent = await emailTransport.sendAttachmentEmail({
+        toEmail,
+        toName: email.toName ?? toEmail,
+        subject: email.subject,
+        htmlContent: email.htmlBody,
+        attachment: email.attachment,
+      })
+      if (!sent) {
+        throw new EmailDeliveryError('Email attachment delivery failed', {
+          provider: emailTransport.providerName(),
+          retryable: true,
+        })
+      }
+      return
+    }
+
     await emailTransport.sendTransactionalEmail({
       to: email.to,
       subject: email.subject,
@@ -203,7 +234,11 @@ export class EmailQueue {
     })
   }
 
-  public static enqueue(email: Omit<QueuedEmail, 'id' | 'attempts' | 'createdAt' | 'status' | 'sentAt'>): string {
+  public static enqueue(
+    email: Omit<QueuedEmail, 'id' | 'attempts' | 'createdAt' | 'status' | 'sentAt' | 'maxAttempts'> & {
+      maxAttempts?: number
+    },
+  ): string {
     const id = `email_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 
     if (email.dedupeKey && !EmailQueue.claimDedupe(email.dedupeKey)) {
@@ -217,6 +252,7 @@ export class EmailQueue {
     const queuedEmail: QueuedEmail = {
       id,
       to: email.to,
+      toName: email.toName,
       subject: email.subject,
       htmlBody: email.htmlBody,
       textBody: email.textBody,
@@ -228,6 +264,7 @@ export class EmailQueue {
       createdAt: new Date(),
       status: 'pending',
       dedupeKey: email.dedupeKey,
+      attachment: email.attachment,
     }
 
     this.queue.push(queuedEmail)
@@ -473,13 +510,5 @@ export class EmailService {
 }
 
 export function getBranding() {
-  return {
-    brandName: 'Vedhic Foods',
-    tagline: 'Pure Farm-Fresh Millets & Heritage Organic Laddus',
-    supportEmail: 'care@vedhicfoods.com',
-    supportPhone: '+91 98765 43210',
-    website: 'https://vedhicfoods.com',
-    address: 'Bengaluru, Karnataka - 560038',
-    gstin: '29AABCU9603R1ZM',
-  }
+  return BRANDING
 }

@@ -3,6 +3,7 @@ import { Prisma, InventoryStatus } from '@prisma/client'
 import { prisma } from '../config/database'
 import { logger } from '../config/logger'
 import { AuditService } from './audit.service'
+import { invalidateCatalogCaches } from '../utils/catalog-cache'
 import { BadRequestError, NotFoundError } from '../utils/errors'
 import {
   AdjustStockInput,
@@ -12,6 +13,7 @@ import {
   FormattedInventory,
   FormattedInventoryLog,
   INVENTORY_AUDIT_ACTIONS,
+  MAX_INVENTORY_QUANTITY,
 } from '../types/inventory.types'
 
 export class InventoryService {
@@ -161,7 +163,7 @@ export class InventoryService {
    */
   public static async listInventory(query: InventoryQueryInput) {
     const page = Math.max(1, query.page || 1)
-    const limit = Math.min(100, Math.max(1, query.limit || query.per_page || 20))
+    const limit = Math.min(100, Math.max(1, query.per_page ?? query.limit ?? 20))
     const search = (query.search || query.q)?.trim()
     const isLowStock = query.lowStockOnly || (query as any).low_stock
     const statusFilter = query.status
@@ -337,6 +339,9 @@ export class InventoryService {
       req,
     })
 
+    // Threshold / status changes flow into the public availability label.
+    await invalidateCatalogCaches()
+
     return this.formatInventory(result)
   }
 
@@ -356,7 +361,7 @@ export class InventoryService {
       throw new BadRequestError('Adjustment quantity must be greater than zero')
     }
 
-    const result = await prisma.$transaction(async (tx) => {
+    const { result, previousAvailable } = await prisma.$transaction(async (tx) => {
       const { product, inventory } = await this.getOrCreateInventory(tx, productIdOrSlug)
 
       const lockedRows: any[] = await tx.$queryRaw`SELECT id, "availableQuantity", "reservedQuantity", "soldQuantity" FROM inventories WHERE id = ${inventory.id} FOR UPDATE`
@@ -399,6 +404,14 @@ export class InventoryService {
 
       if (newAvailable < 0) {
         throw new BadRequestError('Operation would result in negative available inventory')
+      }
+
+      // `inventories.availableQuantity` is a 4-byte signed integer. A large
+      // ADD_STOCK/RESTOCK (or MANUAL_ADJUSTMENT target) that passes the schema
+      // bound can still overflow when added to the current quantity; reject it
+      // as a validation error rather than letting the write fail as a 500.
+      if (!Number.isSafeInteger(newAvailable) || newAvailable > MAX_INVENTORY_QUANTITY) {
+        throw new BadRequestError('Operation would exceed the maximum supported inventory quantity')
       }
 
       const threshold = reorderThreshold !== undefined ? reorderThreshold : inventory.reorderThreshold
@@ -450,8 +463,8 @@ export class InventoryService {
         },
       })
 
-      return updatedInventory
-    })
+      return { result: updatedInventory, previousAvailable: prevAvailable }
+    }, { maxWait: 10_000, timeout: 30_000 })
 
     const auditAction =
       operation === 'RESTOCK'
@@ -468,12 +481,17 @@ export class InventoryService {
         productName: result.product.name,
         operation,
         quantity,
-        previousQuantity: result.availableQuantity - (operation === 'REMOVE_STOCK' ? -quantity : quantity),
+        previousQuantity: previousAvailable,
         newQuantity: result.availableQuantity,
         reason,
       },
       req,
     })
+
+    // Admin stock changes alter the public product's stock / availability, so
+    // drop the cached storefront reads or the next GET can serve stale stock
+    // for the remainder of the detail TTL. No-op when Redis is not configured.
+    await invalidateCatalogCaches()
 
     logger.info(
       {

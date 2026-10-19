@@ -1,13 +1,12 @@
 import { Request, Response } from 'express'
-import { PaymentMethod, RoleName, OrderStatus } from '@prisma/client'
+import { PaymentMethod, PaymentRecordStatus, PaymentStatus, RoleName, OrderStatus } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
 import { prisma } from '../config/database'
 import { logger } from '../config/logger'
 import { sendControllerError } from '../utils/api-response'
-import { InvoiceEmailService } from '../services/invoice-email.service'
 import { OrderEmailService } from '../services/order-email.service'
-import { InvoiceData } from '../integrations/pdf/invoice-generator'
+import { orderAccessTokenMatchesOrder } from '../utils/order-token'
 import { CheckoutService } from '../services/checkout.service'
 import { InventoryService } from '../services/inventory.service'
 import { RazorpayService } from '../integrations/razorpay/razorpay.service'
@@ -20,6 +19,7 @@ import {
 } from '../utils/order-status'
 import { clampPageNumber, clampPageSize, clampSearchTerm } from '../utils/pagination'
 import { signOrderAccessToken } from '../utils/order-token'
+import { isCodEnabled } from '../utils/cod-settings'
 import { publish } from '../events/realtime'
 
 export class OrderController {
@@ -47,9 +47,10 @@ export class OrderController {
         pincode,
         items,
         lines,
-        paymentMethod = 'COD',
+        paymentMethod = 'RAZORPAY',
         couponCode,
         notes,
+        idempotencyKey,
       } = req.body
 
       const rawItems: { productId: string; quantity: number }[] =
@@ -78,6 +79,29 @@ export class OrderController {
         return
       }
 
+      // Reject malformed identity fields before any DB write. A control byte
+      // (e.g. NUL) in these strings previously reached Prisma and surfaced as an
+      // unhandled 500 leaking an internal stack; an obviously invalid email was
+      // accepted. Both are now clean 400s.
+      if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(email)) {
+        res.status(400).json({ error: 'Enter a valid email address.' })
+        return
+      }
+      // oxlint-disable-next-line no-control-regex -- deliberate: reject NUL/control bytes
+      const controlChars = /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/
+      const identityFields = [
+        fullName,
+        contactPhone,
+        line1,
+        resolvedCity,
+        resolvedState,
+        resolvedPincode,
+      ]
+      if (identityFields.some((value) => controlChars.test(value))) {
+        res.status(400).json({ error: 'One or more fields contain invalid characters.' })
+        return
+      }
+
       if (rawItems.some((i) => !i.productId || !Number.isFinite(i.quantity) || i.quantity < 1)) {
         res
           .status(400)
@@ -95,6 +119,18 @@ export class OrderController {
 
       if (!supportedMethods.includes(method)) {
         res.status(400).json({ error: `Unsupported payment method '${paymentMethod}'.` })
+        return
+      }
+
+      // STOREFRONT POLICY: Cash on Delivery is optional and admin-controlled.
+      // Reject COD here (before any identity/inventory side effect) unless an
+      // operator has explicitly enabled it; Razorpay is always available. Admin
+      // and delivery COD handling (delivery.service.ts) is deliberately
+      // untouched so already-placed COD orders keep working.
+      if (method === 'COD' && !(await isCodEnabled())) {
+        res.status(400).json({
+          error: 'Cash on Delivery is not available right now. Please choose an online payment method.',
+        })
         return
       }
 
@@ -117,6 +153,7 @@ export class OrderController {
         paymentMethod: method as PaymentMethod,
         couponCode: couponCode || null,
         notes: notes || null,
+        idempotencyKey: idempotencyKey ? String(idempotencyKey) : undefined,
       }
 
       // Validate through the canonical schema so this endpoint enforces exactly
@@ -143,26 +180,37 @@ export class OrderController {
       // that customer's account — polluting their order history and triggering
       // fulfilment and transactional mail against a real account.
       //
-      // Rules now:
-      //   - Email belongs to an existing account -> the caller must prove they
-      //     own it by presenting a valid access token for that exact account.
+      // The storefront offers no customer sign-in, so rejecting a known email
+      // with a 401 dead-ended every repeat buyer. Rules now:
+      //   - No session + email belongs to a CUSTOMER row (the throwaway guest
+      //     rows this endpoint creates, plus any customer rows) -> reuse that
+      //     row for the guest order. `email` is unique, so a second insert
+      //     would fail; reusing keeps exactly one row per address.
+      //   - No session + email belongs to a privileged account (ADMIN/STAFF/
+      //     OWNER) -> refuse; a guest order must never be written behind a
+      //     staff account.
+      //   - Session present -> the email must match that exact account.
       //   - Unknown email + no session -> a throwaway guest row is created.
+      //
+      // A reused-user guest still has no session, so the anonymous order token
+      // below is issued exactly as for a freshly created guest row.
       // ============================================================
       const sessionUserId = req.user?.id
       let user = await prisma.user.findUnique({ where: { email } })
 
       if (user) {
         if (!sessionUserId) {
-          res.status(401).json({
-            success: false,
-            error:
-              'An account already exists for this email address. Sign in to complete checkout, ' +
-              'or use a different email address.',
-          })
-          return
-        }
-
-        if (sessionUserId !== user.id) {
+          if (user.role !== RoleName.CUSTOMER) {
+            res.status(403).json({
+              success: false,
+              error:
+                "This email address can't be used for guest checkout. " +
+                'Please use a different email address.',
+            })
+            return
+          }
+          // CUSTOMER with no session: fall through and reuse `user` below.
+        } else if (sessionUserId !== user.id) {
           logger.warn(
             { sessionUserId, requestedEmail: email },
             'Checkout attempted against an email owned by another account'
@@ -237,43 +285,13 @@ export class OrderController {
         'Storefront checkout completed via canonical CheckoutService'
       )
 
-      // Generate A4 PDF invoice and send transactional email via Brevo
-      const invoiceData: InvoiceData = {
-        invoiceNumber: response.invoiceId || response.orderNumber,
-        orderNumber: response.orderNumber,
-        orderDate: new Date().toLocaleDateString('en-IN', {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-        }),
-        customerName: fullName,
-        customerEmail: email,
-        customerPhone: contactPhone,
-        shippingAddress: {
-          fullName,
-          line1: line1 || 'Address provided at checkout',
-          city: resolvedCity || 'City',
-          state: resolvedState || 'State',
-          pincode: resolvedPincode || '500001',
-          country: 'India',
-        },
-        items: response.items,
-        subtotal: response.subtotal,
-        discount: response.discount,
-        shipping: response.shipping,
-        tax: response.tax,
-        total: response.total,
-        paymentMethod: method,
-        paymentStatus:
-          method === 'COD' ? 'Cash on Delivery (Pending)' : 'Payment Pending (Awaiting Razorpay)',
-      }
+      // No invoice is generated or emailed here. The order is created in
+      // PENDING_PAYMENT and the real tax invoice is produced only after the
+      // payment is captured, by InvoiceService.createInvoiceForOrder, which is
+      // invoked from RazorpayService on capture (COD is rejected above, so a
+      // pre-payment "tax invoice" can never be issued from the storefront).
 
-      // Dispatch the invoice email asynchronously with the A4 PDF attached.
-      InvoiceEmailService.sendOrderConfirmedInvoiceEmail(invoiceData).catch((err) => {
-        logger.error({ error: err.message }, 'Failed to dispatch email with A4 invoice')
-      })
-
-      res.status(201).json({
+      res.status(isIdempotentReplay ? 200 : 201).json({
         success: true,
         orderId: response.orderId,
         orderNumber: response.orderNumber,
@@ -286,7 +304,7 @@ export class OrderController {
         paymentMethod: response.paymentMethod,
         isIdempotentReplay,
         ...(orderToken ? { orderToken } : {}),
-        message: 'Order confirmed successfully. Tax invoice sent to email.',
+        message: 'Order placed successfully. Complete payment online to confirm your order.',
       })
     } catch (error: any) {
       logger.error({ error: error.message }, 'Failed to process checkout')
@@ -311,8 +329,72 @@ export class OrderController {
       const limit = clampPageSize(req.query.limit ?? req.query.per_page, 25)
 
       const where: Record<string, unknown> = {}
+
+      // Status facet. Like the payment facets below, an unrecognised value is
+      // ignored rather than passed to Prisma. Previously it went straight into
+      // `where.status`, and Prisma rejects an unknown enum with a
+      // `PrismaClientValidationError` that surfaced as a 500 — a malformed
+      // filter looked like a server fault instead of "no such status".
       const status = typeof req.query.status === 'string' ? req.query.status.trim() : ''
-      if (status) where.status = status.toUpperCase()
+      if (status) {
+        const normalized = status.toUpperCase()
+        if ((Object.values(OrderStatus) as string[]).includes(normalized)) {
+          where.status = normalized
+        }
+      }
+
+      // Payment-method / payment-status facets. Values are normalised to the
+      // enum casing and an unrecognised value is ignored rather than passed to
+      // Prisma (which would surface an invalid-enum 500).
+      const paymentMethod =
+        typeof req.query.paymentMethod === 'string' ? req.query.paymentMethod.trim() : ''
+      if (paymentMethod) {
+        const normalized = paymentMethod.toUpperCase()
+        if ((Object.values(PaymentMethod) as string[]).includes(normalized)) {
+          where.paymentMethod = normalized
+        }
+      }
+
+      const paymentStatus =
+        typeof req.query.paymentStatus === 'string' ? req.query.paymentStatus.trim() : ''
+      if (paymentStatus) {
+        const normalized = paymentStatus.toUpperCase()
+        if ((Object.values(PaymentStatus) as string[]).includes(normalized)) {
+          where.paymentStatus = normalized
+        }
+      }
+
+      // Date-window facet over `createdAt`. Accepts `from`/`to` with
+      // `startDate`/`endDate` as aliases (the admin reports use the latter).
+      // An unparseable bound is a client error, not a silently-ignored filter
+      // that would return the whole table and be mistaken for "no matches".
+      const rawFrom = req.query.from ?? req.query.startDate
+      const rawTo = req.query.to ?? req.query.endDate
+      const createdAt: Record<string, Date> = {}
+      if (typeof rawFrom === 'string' && rawFrom.trim()) {
+        const from = new Date(rawFrom)
+        if (Number.isNaN(from.getTime())) {
+          res.status(400).json({ error: 'Invalid "from" date filter.' })
+          return
+        }
+        createdAt.gte = from
+      }
+      if (typeof rawTo === 'string' && rawTo.trim()) {
+        const to = new Date(rawTo)
+        if (Number.isNaN(to.getTime())) {
+          res.status(400).json({ error: 'Invalid "to" date filter.' })
+          return
+        }
+        createdAt.lte = to
+      }
+      if (createdAt.gte && createdAt.lte && createdAt.gte > createdAt.lte) {
+        res.status(400).json({ error: 'The "from" date must be before the "to" date.' })
+        return
+      }
+      if (createdAt.gte || createdAt.lte) {
+        where.createdAt = createdAt
+      }
+
       const search = clampSearchTerm(req.query.search ?? req.query.q)
       if (search) {
         where.OR = [
@@ -321,6 +403,16 @@ export class OrderController {
           { customerName: { contains: search, mode: 'insensitive' } },
         ]
       }
+
+      // Sorting. The allowed columns are an explicit allowlist — a raw
+      // client-supplied `sortBy` would otherwise let a caller order by any
+      // column (including relations) and turn the endpoint into a schema probe.
+      const sortableColumns = ['createdAt', 'updatedAt', 'total', 'orderNumber', 'status'] as const
+      const requestedSortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy.trim() : ''
+      const sortBy = (sortableColumns as readonly string[]).includes(requestedSortBy)
+        ? (requestedSortBy as (typeof sortableColumns)[number])
+        : 'createdAt'
+      const sortOrder = String(req.query.sortOrder ?? '').toLowerCase() === 'asc' ? 'asc' : 'desc'
 
       const [orders, total] = await Promise.all([
         prisma.order.findMany({
@@ -332,6 +424,8 @@ export class OrderController {
             orderNumber: true,
             status: true,
             paymentStatus: true,
+            paymentMethod: true,
+            currency: true,
             subtotal: true,
             discount: true,
             shipping: true,
@@ -356,8 +450,22 @@ export class OrderController {
             user: {
               select: { id: true, fullName: true, email: true, phone: true },
             },
+            payment: {
+              select: {
+                id: true,
+                status: true,
+                method: true,
+                amount: true,
+                currency: true,
+                razorpayOrderId: true,
+                razorpayPaymentId: true,
+                verifiedAt: true,
+                failureCode: true,
+                failureReason: true,
+              },
+            },
           },
-          orderBy: { createdAt: 'desc' },
+          orderBy: { [sortBy]: sortOrder },
         }),
         prisma.order.count({ where }),
       ])
@@ -550,6 +658,14 @@ export class OrderController {
         return
       }
 
+      // Anonymous checkout tokens are scoped to the single order that minted
+      // them. Guest accounts are keyed by email and can own multiple orders, so
+      // account ownership alone is not sufficient for this bearer credential.
+      if (!orderAccessTokenMatchesOrder(req.orderAccess, order.id)) {
+        res.status(403).json({ error: 'This order access token does not match the order.' })
+        return
+      }
+
       // Ownership / privilege check — never optional.
       if (!OrderController.isPrivilegedActor(req)) {
         const isOwner =
@@ -557,7 +673,7 @@ export class OrderController {
           order.customerEmail.toLowerCase() === req.user!.email.toLowerCase()
 
         if (!isOwner) {
-          res.status(403).json({ error: 'Forbidden: You do not have permission to cancel this order.' })
+          res.status(404).json({ error: 'Order not found' })
           return
         }
       }
@@ -741,6 +857,11 @@ export class OrderController {
         return
       }
 
+      if (!orderAccessTokenMatchesOrder(req.orderAccess, order.id)) {
+        res.status(403).json({ error: 'This order access token does not match the order.' })
+        return
+      }
+
       // Ownership / privilege check — never optional.
       if (!OrderController.isPrivilegedActor(req)) {
         const isOwner =
@@ -748,7 +869,7 @@ export class OrderController {
           order.customerEmail.toLowerCase() === req.user!.email.toLowerCase()
 
         if (!isOwner) {
-          res.status(403).json({ error: 'Forbidden: You do not have permission to modify this order.' })
+          res.status(404).json({ error: 'Order not found' })
           return
         }
       }
@@ -773,6 +894,20 @@ export class OrderController {
           data: {
             paymentStatus: 'FAILED',
             status: 'FAILED',
+          },
+        })
+
+        // Keep the linked payment record consistent with the order. The webhook
+        // failure path already flips the Payment row to FAILED; the client-driven
+        // path used to leave it PENDING while the order said FAILED, so the two
+        // sources of truth disagreed and reconciliation saw a "pending" payment
+        // on a terminally-failed order. Never touch a captured payment (guarded
+        // by the PAID check above, repeated here for concurrency safety).
+        await tx.payment.updateMany({
+          where: { orderId: order.id, status: { not: PaymentRecordStatus.CAPTURED } },
+          data: {
+            status: PaymentRecordStatus.FAILED,
+            failureReason: parsed.data.reason || 'Payment marked failed by client',
           },
         })
 
@@ -971,11 +1106,49 @@ export class OrderController {
         },
         include: {
           items: true,
+          // Order details surface the linked payment (safe projection only — the
+          // stored `razorpaySignature` is a gateway artifact and is never
+          // exposed), the owning customer, and the delivery record.
+          payment: {
+            select: {
+              id: true,
+              status: true,
+              method: true,
+              amount: true,
+              currency: true,
+              razorpayOrderId: true,
+              razorpayPaymentId: true,
+              verifiedAt: true,
+              failureCode: true,
+              failureReason: true,
+            },
+          },
+          user: {
+            select: { id: true, fullName: true, email: true, phone: true, role: true },
+          },
+          delivery: {
+            select: {
+              id: true,
+              status: true,
+              courierPartner: true,
+              trackingNumber: true,
+              trackingUrl: true,
+              estimatedDelivery: true,
+              deliveredAt: true,
+              recipientName: true,
+              recipientPhone: true,
+            },
+          },
         },
       })
 
       if (!order) {
         res.status(404).json({ error: 'Order not found' })
+        return
+      }
+
+      if (!orderAccessTokenMatchesOrder(req.orderAccess, order.id)) {
+        res.status(403).json({ error: 'This order access token does not match the order.' })
         return
       }
 
@@ -986,7 +1159,9 @@ export class OrderController {
           order.customerEmail.toLowerCase() === req.user!.email.toLowerCase()
 
         if (!isOwner) {
-          res.status(403).json({ error: 'Forbidden: You do not have permission to view this order.' })
+          // Uniform 404 for "not found" and "found but not owned" so the
+          // endpoint cannot be used as an order-existence oracle.
+          res.status(404).json({ error: 'Order not found' })
           return
         }
       }

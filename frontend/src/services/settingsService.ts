@@ -40,6 +40,8 @@ const BACKEND_KEYS: Record<keyof Omit<WebsiteSettings, 'socials' | 'heroImages'>
   heroTitleAccent: 'website_hero_title_accent',
   heroSubtitle: 'website_hero_subtitle',
   heroCtaLabel: 'website_hero_cta_label',
+  storyEnabled: 'website_story_enabled',
+  codEnabled: 'shipping_cod_enabled',
 }
 
 function coerceString(value: unknown): string | undefined {
@@ -57,8 +59,11 @@ function coerceBoolean(value: unknown): boolean | undefined {
   if (typeof value === 'boolean') return value
   if (typeof value === 'string') {
     const normalised = value.trim().toLowerCase()
-    if (normalised === 'true') return true
-    if (normalised === 'false') return false
+    // Mirrors the backend's truthiness parsing (see utils/cod-settings.ts) so a
+    // hand-written `1`/`yes` cannot enable COD server-side while the storefront
+    // still hides the option.
+    if (normalised === 'true' || normalised === '1' || normalised === 'yes') return true
+    if (normalised === 'false' || normalised === '0' || normalised === 'no') return false
   }
   if (typeof value === 'number') return value !== 0
   return undefined
@@ -132,6 +137,12 @@ function fromBackend(raw: unknown): Partial<WebsiteSettings> {
 
   const announcementActive = coerceBoolean(map[BACKEND_KEYS.announcementActive])
   if (announcementActive !== undefined) out.announcementActive = announcementActive
+
+  const storyEnabled = coerceBoolean(map[BACKEND_KEYS.storyEnabled])
+  if (storyEnabled !== undefined) out.storyEnabled = storyEnabled
+
+  const codEnabled = coerceBoolean(map[BACKEND_KEYS.codEnabled])
+  if (codEnabled !== undefined) out.codEnabled = codEnabled
 
   const socials = coerceStringArray(map.website_social_links)
   if (socials) {

@@ -166,6 +166,7 @@ describe('Discount Security, Tamper Resistance & Concurrency', () => {
       await prisma.orderItem.deleteMany({ where: { order: { userId: { in: userIds } } } })
       await prisma.delivery.deleteMany({ where: { order: { userId: { in: userIds } } } })
       await prisma.payment.deleteMany({ where: { order: { userId: { in: userIds } } } })
+      await prisma.invoice.deleteMany({ where: { order: { userId: { in: userIds } } } })
       await prisma.order.deleteMany({ where: { userId: { in: userIds } } })
       await prisma.cartItem.deleteMany({ where: { cart: { userId: { in: userIds } } } })
       await prisma.cart.deleteMany({ where: { userId: { in: userIds } } })

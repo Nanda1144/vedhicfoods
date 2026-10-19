@@ -538,7 +538,11 @@ model Promotion {
   name               String
   slug               String              @unique
   description        String?
+  title              String?
+  subtitle           String?
   bannerImageUrl     String?
+  destinationUrl     String?
+  ctaLabel           String?
   discountType       DiscountType        @default(PERCENTAGE)
   discountValue      Decimal             @db.Decimal(10, 2)
   startDate          DateTime

@@ -9,8 +9,24 @@ function cookiePath(name: RefreshCookieName): string {
   return name === 'adminRefreshToken' ? '/api/v1/admin/auth' : '/api/v1/auth'
 }
 
+function isSecureEnvironment(): boolean {
+  return env.NODE_ENV !== 'development' && env.NODE_ENV !== 'test'
+}
+
 function secureAttribute(): string {
-  return env.NODE_ENV === 'development' || env.NODE_ENV === 'test' ? '' : '; Secure'
+  return isSecureEnvironment() ? '; Secure' : ''
+}
+
+/**
+ * The admin console and the API are separate origins in production
+ * (`*.vercel.app` → `*.onrender.com`). A `SameSite=Strict` cookie is never sent
+ * on that cross-site request, so `/admin/auth/refresh` saw no token and replied
+ * 400, while every protected call kept 401-ing. `SameSite=None` is required for
+ * credentialed cross-site XHR and must be paired with `Secure` (which production
+ * always sets).
+ */
+function sameSiteAttribute(): string {
+  return isSecureEnvironment() ? 'SameSite=None' : 'SameSite=Strict'
 }
 
 export function readCookie(req: Request, name: RefreshCookieName): string | null {
@@ -34,13 +50,13 @@ export function setRefreshCookie(res: Response, name: RefreshCookieName, token: 
   const secure = secureAttribute()
   res.append(
     'Set-Cookie',
-    `${name}=${encodeURIComponent(token)}; Path=${cookiePath(name)}; Max-Age=${COOKIE_MAX_AGE_MS / 1000}; HttpOnly; SameSite=Strict${secure}`,
+    `${name}=${encodeURIComponent(token)}; Path=${cookiePath(name)}; Max-Age=${COOKIE_MAX_AGE_MS / 1000}; HttpOnly; ${sameSiteAttribute()}${secure}`,
   )
 }
 
 export function clearRefreshCookie(res: Response, name: RefreshCookieName): void {
   const secure = secureAttribute()
-  res.append('Set-Cookie', `${name}=; Path=${cookiePath(name)}; Max-Age=0; HttpOnly; SameSite=Strict${secure}`)
+  res.append('Set-Cookie', `${name}=; Path=${cookiePath(name)}; Max-Age=0; HttpOnly; ${sameSiteAttribute()}${secure}`)
 }
 
 /** A refresh cookie may only be used by the SPA that owns that cookie. */

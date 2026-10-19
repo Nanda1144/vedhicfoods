@@ -171,6 +171,17 @@
   color: var(--color-primary-contrast);
 }
 
+.logo__mark--image {
+  background: transparent;
+  overflow: hidden;
+}
+
+.logo__image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 .logo__text {
   display: flex;
   flex-direction: column;

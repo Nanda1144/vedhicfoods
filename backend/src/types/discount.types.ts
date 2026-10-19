@@ -148,7 +148,11 @@ export const createPromotionSchema = z.object({
     .regex(/^[a-z0-9-]+$/, 'Slug can only contain lowercase alphanumeric characters and hyphens')
     .optional(),
   description: z.string().trim().max(1000).optional().nullable(),
+  title: z.string().trim().min(2, 'Title must be at least 2 characters').max(120).optional().nullable(),
+  subtitle: z.string().trim().max(300).optional().nullable(),
   bannerImageUrl: z.string().url().optional().nullable().or(z.string().max(500)),
+  destinationUrl: z.string().trim().max(500).optional().nullable(),
+  ctaLabel: z.string().trim().max(40).optional().nullable(),
   discountType: z.nativeEnum(DiscountTypeEnum).default(DiscountTypeEnum.PERCENTAGE),
   discountValue: z.number().positive('Discount value must be greater than 0'),
   minOrderValue: z.number().min(0).default(0).optional(),
@@ -204,7 +208,11 @@ export const updatePromotionSchema = z.object({
     .regex(/^[a-z0-9-]+$/, 'Slug can only contain lowercase alphanumeric characters and hyphens')
     .optional(),
   description: z.string().trim().max(1000).optional().nullable(),
+  title: z.string().trim().min(2).max(120).optional().nullable(),
+  subtitle: z.string().trim().max(300).optional().nullable(),
   bannerImageUrl: z.string().url().optional().nullable().or(z.string().max(500)),
+  destinationUrl: z.string().trim().max(500).optional().nullable(),
+  ctaLabel: z.string().trim().max(40).optional().nullable(),
   discountType: z.nativeEnum(DiscountTypeEnum).optional(),
   discountValue: z.number().positive('Discount value must be greater than 0').optional(),
   minOrderValue: z.number().min(0).optional().nullable(),

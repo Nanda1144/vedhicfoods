@@ -998,7 +998,7 @@
 }
 
 /* ==========================================================================
-   Admin toolkit � toolbar, pagination, alerts, charts, forms, detail
+   Admin toolkit - toolbar, pagination, alerts, charts, forms, detail
    ========================================================================== */
 
 /* --- Shared helpers ------------------------------------------------------- */
@@ -1960,7 +1960,7 @@
 }
 
 /* ==========================================================================
-   Admin pages � promotions, categories, staff, support, orders, branding
+   Admin pages - promotions, categories, staff, support, orders, branding
    ========================================================================== */
 
 /* --- Promotions ------------------------------------------------------------ */
@@ -1983,6 +1983,27 @@
     var(--color-surface);
   position: relative;
   transition: opacity 150ms ease;
+}
+
+/*
+ * Full-bleed banner across the top of the card. The negative margins cancel the
+ * card's own padding on three sides so the artwork meets the border, while the
+ * rest of the card keeps the padding it already had.
+ */
+.promo-card__banner {
+  flex: none;
+  margin: calc(var(--space-5) * -1) calc(var(--space-5) * -1) 0;
+  aspect-ratio: 16 / 7;
+  overflow: hidden;
+  border-radius: calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0;
+  background: var(--color-background-alt);
+}
+
+.promo-card__banner img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .promo-card.is-off {

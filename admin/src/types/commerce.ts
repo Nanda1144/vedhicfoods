@@ -234,6 +234,12 @@ export interface Promotion {
   id: ID
   title: string
   subtitle: string
+  /** Banner artwork shown on the storefront (URL or data URL). */
+  bannerImageUrl?: string
+  /** Where the banner call-to-action leads. */
+  destinationUrl?: string
+  /** Optional call-to-action label, e.g. "Shop the sale". */
+  ctaLabel?: string
   /** 'shipping' coupons are unsupported by the backend discount engine. */
   type: DiscountType
   value: number

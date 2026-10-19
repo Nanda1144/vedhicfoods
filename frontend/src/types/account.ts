@@ -150,6 +150,8 @@ export interface AuditLog {
 export interface WebsiteSettings {
   brandName: string
   tagline: string
+  /** Admin-uploaded logo (URL or data URL); falls back to the leaf mark. */
+  logoUrl: string
   supportEmail: string
   supportPhone: string
   whatsapp: string

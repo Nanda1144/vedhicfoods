@@ -595,7 +595,18 @@ describe('Daily invoice PDF', () => {
     const order = await createOrder(customerAId, 'Alice Invoice', customerAEmail)
     const invoice = await InvoiceService.createInvoiceForOrder(order.id)
 
-    const result = await InvoiceService.getDailyInvoicesPdf(InvoiceService.todayBusinessDate())
+    // The endpoint is global for a calendar day, and suites run against the same
+    // database in parallel. Other suites create invoices for orders without line
+    // items, which correctly makes a whole-day bundle unreconcilable. Pin this
+    // invoice to a date only this test uses so the assertion covers the bundle
+    // builder rather than whichever unrelated rows happen to exist today.
+    const businessDate = '2000-01-01'
+    await prisma.invoice.update({
+      where: { id: invoice.id },
+      data: { invoiceDate: new Date('2000-01-01T12:00:00.000Z') },
+    })
+
+    const result = await InvoiceService.getDailyInvoicesPdf(businessDate)
 
     expect(result.buffer.subarray(0, 5).toString('latin1')).toBe('%PDF-')
     expect(result.count).toBeGreaterThanOrEqual(1)

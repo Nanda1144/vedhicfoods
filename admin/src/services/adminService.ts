@@ -384,15 +384,18 @@ function mapDiscount(raw: any): Discount {
 function mapPromotion(raw: any): Promotion {
   return {
     id: raw.id,
-    title: raw.name ?? '',
-    subtitle: raw.description ?? '',
+    title: raw.title ?? raw.name ?? '',
+    subtitle: raw.subtitle ?? raw.description ?? '',
+    bannerImageUrl: typeof raw.bannerImageUrl === 'string' ? raw.bannerImageUrl : undefined,
+    destinationUrl: typeof raw.destinationUrl === 'string' ? raw.destinationUrl : undefined,
+    ctaLabel: typeof raw.ctaLabel === 'string' ? raw.ctaLabel : undefined,
     type: raw.discountType === 'FIXED_AMOUNT' ? 'flat' : 'percent',
     value: num(raw.discountValue),
     minOrderValue: num(raw.minOrderValue),
     startsAt: iso(raw.startDate ?? raw.startsAt) ?? '',
     expiresAt: iso(raw.endDate ?? raw.expiresAt) ?? '',
     active: raw.isActive ?? bool(raw.active),
-    priority: num(raw.priority, 0),
+    priority: num(raw.priority),
   }
 }
 
@@ -1046,6 +1049,11 @@ export const adminService = {
     const body = {
       name: input.title,
       description: input.subtitle || undefined,
+      title: input.title,
+      subtitle: input.subtitle || undefined,
+      bannerImageUrl: input.bannerImageUrl || undefined,
+      destinationUrl: input.destinationUrl || undefined,
+      ctaLabel: input.ctaLabel || undefined,
       discountType: input.type === 'flat' ? 'FIXED_AMOUNT' : 'PERCENTAGE',
       discountValue: input.value,
       minOrderValue: input.minOrderValue ?? 0,
@@ -1063,8 +1071,17 @@ export const adminService = {
       throw new Error('Shipping discounts are not supported by the backend coupon engine.')
     }
     const body: Record<string, unknown> = {}
-    if (patch.title !== undefined) body.name = patch.title
-    if (patch.subtitle !== undefined) body.description = patch.subtitle
+    if (patch.title !== undefined) {
+      body.name = patch.title
+      body.title = patch.title
+    }
+    if (patch.subtitle !== undefined) {
+      body.description = patch.subtitle
+      body.subtitle = patch.subtitle
+    }
+    if (patch.bannerImageUrl !== undefined) body.bannerImageUrl = patch.bannerImageUrl || null
+    if (patch.destinationUrl !== undefined) body.destinationUrl = patch.destinationUrl || null
+    if (patch.ctaLabel !== undefined) body.ctaLabel = patch.ctaLabel || null
     if (patch.type !== undefined) body.discountType = patch.type === 'flat' ? 'FIXED_AMOUNT' : 'PERCENTAGE'
     if (patch.value !== undefined) body.discountValue = patch.value
     if (patch.minOrderValue !== undefined) body.minOrderValue = patch.minOrderValue

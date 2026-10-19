@@ -1,6 +1,7 @@
 export { Icon } from './Icon'
 export type { IconName, IconProps } from './Icon'
 export { Logo } from './Logo'
+export { WelcomeSplash } from './WelcomeSplash'
 export { Button, ButtonLink, IconButton, LinkIconButton } from './Button'
 export type { ButtonProps, ButtonLinkProps, ButtonVariant, ButtonSize } from './Button'
 export { Spinner } from './Spinner'

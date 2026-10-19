@@ -4,7 +4,7 @@ import { useAdminAuth } from '@/context/AdminAuthContext'
 import { useAsync } from '@/hooks'
 import { useToast } from '@/context'
 import { formatDate } from '@/utils/format'
-import { AdminPageHeader, ConfirmDialog, AdminToolbar } from '@/components/admin'
+import { AdminPageHeader, ConfirmDialog, AdminToolbar, ImageUploadField } from '@/components/admin'
 import type { DiscountType, Promotion } from '@/types'
 import { Badge, Button, Modal, Skeleton } from '@/components/common'
 import { Field, Input, Select, Switch, Textarea } from '@/components/common/form'
@@ -17,7 +17,21 @@ import { Field, Input, Select, Switch, Textarea } from '@/components/common/form
  */
 function discountLabel(promotion: Promotion): string {
   const value = Number(promotion.value) || 0
-  return promotion.type === 'flat' ? `₹${value} off` : `${value}% off`
+  return promotion.type === 'flat' ? `\u20B9${value} off` : `${value}% off`
+}
+
+/** ISO timestamp → the `YYYY-MM-DD` value a date input expects. */
+function toDateInput(value: string | undefined): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+function fromDateInput(value: string, endOfDay = false): string {
+  if (!value) return ''
+  return new Date(`${value}T${endOfDay ? '23:59:59' : '00:00:00'}`).toISOString()
 }
 
 export function AdminPromotionsPage() {
@@ -32,7 +46,12 @@ export function AdminPromotionsPage() {
 
   const filtered = (data ?? []).filter((promotion) => {
     const query = search.trim().toLowerCase()
-    return !query || `${promotion.title} ${promotion.subtitle} ${promotion.type}`.toLowerCase().includes(query)
+    return (
+      !query ||
+      `${promotion.title} ${promotion.subtitle} ${promotion.type} ${promotion.ctaLabel ?? ''}`
+        .toLowerCase()
+        .includes(query)
+    )
   })
 
   const toggle = async (promotion: Promotion) => {
@@ -104,6 +123,11 @@ export function AdminPromotionsPage() {
         {filtered.map((promotion) => {
           return (
             <article key={promotion.id} className={`promo-card${promotion.active ? '' : ' is-off'}`}>
+              {promotion.bannerImageUrl && (
+                <div className="promo-card__banner">
+                  <img src={promotion.bannerImageUrl} alt="" loading="lazy" />
+                </div>
+              )}
               <header className="promo-card__head">
                 <span className="promo-card__placement">{discountLabel(promotion)}</span>
                 <button
@@ -191,9 +215,16 @@ function PromotionModal({
   const [form, setForm] = useState({
     title: promotion?.title ?? '',
     subtitle: promotion?.subtitle ?? '',
+    bannerImageUrl: promotion?.bannerImageUrl ?? '',
+    destinationUrl: promotion?.destinationUrl ?? '',
+    ctaLabel: promotion?.ctaLabel ?? '',
     type: promotion?.type ?? ('percent' as DiscountType),
     value: promotion?.value ?? '',
     minOrderValue: promotion?.minOrderValue ?? '',
+    startsAt: toDateInput(promotion?.startsAt ?? new Date().toISOString()),
+    expiresAt: toDateInput(
+      promotion?.expiresAt ?? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+    ),
     active: promotion?.active ?? true,
   })
   const [saving, setSaving] = useState(false)
@@ -209,12 +240,17 @@ function PromotionModal({
       const payload: Omit<Promotion, 'id'> = {
         title: form.title.trim(),
         subtitle: form.subtitle.trim(),
+        bannerImageUrl: form.bannerImageUrl || undefined,
+        destinationUrl: form.destinationUrl.trim() || undefined,
+        ctaLabel: form.ctaLabel.trim() || undefined,
         type: form.type,
         value: Number(form.value),
         minOrderValue: Number(form.minOrderValue || 0),
         active: form.active,
-        startsAt: promotion?.startsAt ?? new Date().toISOString(),
-        expiresAt: promotion?.expiresAt ?? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+        startsAt: fromDateInput(form.startsAt) || new Date().toISOString(),
+        expiresAt:
+          fromDateInput(form.expiresAt, true) ||
+          new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
       }
       if (isNew) {
         await adminService.createPromotion(payload)
@@ -266,6 +302,50 @@ function PromotionModal({
               required
             />
           </Field>
+          <ImageUploadField
+            label="Banner image"
+            hint="Optional. Shown as the festival banner artwork on the storefront."
+            value={form.bannerImageUrl}
+            onChange={(value) => patch('bannerImageUrl', value)}
+          />
+          <div className="admin-form__grid">
+            <Field label="Destination URL" hint="Where the banner button leads, e.g. /shop or https://…">
+              <Input
+                value={form.destinationUrl}
+                onChange={(event) => patch('destinationUrl', event.target.value)}
+                placeholder="/shop"
+              />
+            </Field>
+            <Field label="Button label" hint="Optional. Leave blank to hide the banner button.">
+              <Input
+                value={form.ctaLabel}
+                onChange={(event) => patch('ctaLabel', event.target.value)}
+                placeholder="Shop the sale"
+              />
+            </Field>
+          </div>
+        </div>
+
+        <div className="admin-form__section">
+          <p className="admin-form__section-title">Schedule</p>
+          <div className="admin-form__grid">
+            <Field label="Starts on" required>
+              <Input
+                type="date"
+                value={form.startsAt}
+                onChange={(event) => patch('startsAt', event.target.value)}
+                required
+              />
+            </Field>
+            <Field label="Ends on" required>
+              <Input
+                type="date"
+                value={form.expiresAt}
+                onChange={(event) => patch('expiresAt', event.target.value)}
+                required
+              />
+            </Field>
+          </div>
         </div>
 
         <div className="admin-form__section">

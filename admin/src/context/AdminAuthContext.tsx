@@ -137,7 +137,7 @@ export function AdminAuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   /**
-   * Drops a session that has seen no activity for 72 hours (see
+   * Drops a session that has seen no activity for 24 hours (see
    * `useAdminIdleLogout`). Mirrors a rejected refresh: the console returns to
    * login with the same "you were signed out" explanation.
    */

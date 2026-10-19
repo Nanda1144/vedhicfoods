@@ -25,12 +25,12 @@ export class AuthService {
    *
    * The refresh token is rotated on every use with a fresh expiry, so this is
    * an *inactivity* timeout rather than an absolute one: any authenticated
-   * request within the window keeps the session alive, and 72 hours of
-   * silence expires the token — the next refresh is rejected and the console
+   * request within the window keeps the session alive, and 24 hours of
+   * silence expires the token - the next refresh is rejected and the console
    * returns to the login screen. Customer sessions keep the longer window
    * below; shoppers should not be signed out mid-basket.
    */
-  private static readonly CONSOLE_SESSION_IDLE_TTL_HOURS = 72
+  private static readonly CONSOLE_SESSION_IDLE_TTL_HOURS = 24
   private static readonly RESET_TOKEN_EXPIRY_HOURS = 1
   private static readonly VERIFY_TOKEN_EXPIRY_HOURS = 24
   /**
@@ -50,7 +50,7 @@ export class AuthService {
   /**
    * Expiry for a newly minted or rotated refresh token, by account type.
    *
-   * Console roles get the 72-hour idle window; every other role (currently
+   * Console roles get the 24-hour idle window; every other role (currently
    * only CUSTOMER) keeps `REFRESH_TOKEN_EXPIRY_DAYS`.
    */
   private static refreshTokenExpiryFor(role: RoleName): Date {
@@ -140,7 +140,7 @@ export class AuthService {
    * and returns the raw token to be delivered to the client.
    *
    * The TTL depends on the account type: console roles (OWNER/ADMIN/STAFF)
-   * expire after 72 hours of inactivity; customers after 7 days. See
+   * expire after 24 hours of inactivity; customers after 7 days. See
    * `refreshTokenExpiryFor`.
    */
   public static async generateRefreshToken(userId: string, role: RoleName, req?: Request): Promise<string> {

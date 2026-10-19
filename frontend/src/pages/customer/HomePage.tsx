@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { TRUST_BADGES, COMPANY_MILESTONES } from '@/config/site'
 import { productService } from '@/services/productService'
 import { contentService, newsletterService } from '@/services/contentService'
+import { promotionService } from '@/services/promotionService'
 import { useAsync } from '@/hooks'
 import { useToast, useSettings } from '@/context'
 import type { IconName } from '@/components/common'
@@ -18,7 +19,7 @@ import {
   Skeleton,
 } from '@/components/common'
 import { ProductGrid, CategoryCard } from '@/components/product'
-import { HeroSlider, Testimonials } from '@/components/home'
+import { HeroSlider, Testimonials, PromotionBanner } from '@/components/home'
 import traditionalPreparationImage from '@assets/body/Tradition-Preparation.webp'
 import organicIngredientsImage from '@assets/body/organic-ingredients.webp'
 
@@ -53,6 +54,7 @@ export function HomePage() {
   const premium = useAsync(() => productService.featured(6), [])
   const testimonials = useAsync(() => contentService.testimonials(), [])
   const categories = useAsync(() => productService.categories(), [])
+  const promotions = useAsync(() => promotionService.active(), [])
   const featuredCategories = categories.data?.filter((category) => category.featured).slice(0, 4) ?? []
 
   const handleSubscribe = useCallback(
@@ -66,6 +68,8 @@ export function HomePage() {
   return (
     <>
       <HeroSlider announcement={settings.announcementActive ? settings.announcement : settings.tagline} />
+
+      {promotions.data?.[0] && <PromotionBanner promotion={promotions.data[0]} />}
 
       <section className="section section--alt trust-strip" aria-label="Why shop with Vedhic">
         <div className="container trust-strip__grid">

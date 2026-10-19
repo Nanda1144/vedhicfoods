@@ -21,6 +21,7 @@ import { apiFetch, type RequestOptions } from './http'
 const BACKEND_KEYS: Record<keyof Omit<WebsiteSettings, 'socials' | 'heroImages'>, string> = {
   brandName: 'brand_name',
   tagline: 'brand_tagline',
+  logoUrl: 'brand_logo_url',
   supportEmail: 'support_email',
   supportPhone: 'support_phone',
   whatsapp: 'support_whatsapp',
@@ -102,6 +103,7 @@ function fromBackend(raw: unknown): Partial<WebsiteSettings> {
   const textFields: Array<keyof WebsiteSettings> = [
     'brandName',
     'tagline',
+    'logoUrl',
     'supportEmail',
     'supportPhone',
     'whatsapp',

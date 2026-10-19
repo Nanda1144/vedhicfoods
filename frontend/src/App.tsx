@@ -1,6 +1,6 @@
 import { RouterProvider } from 'react-router-dom'
 import { ToastProvider, ToastViewport, CartProvider, AuthProvider, SettingsProvider } from '@/context'
-import { ErrorBoundary } from '@/components/common'
+import { ErrorBoundary, WelcomeSplash } from '@/components/common'
 import { router } from '@/routes'
 
 export default function App() {
@@ -11,6 +11,7 @@ export default function App() {
           <AuthProvider>
             <CartProvider>
               <RouterProvider router={router} />
+              <WelcomeSplash />
               <ToastViewport />
             </CartProvider>
           </AuthProvider>

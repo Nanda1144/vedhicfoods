@@ -7,9 +7,9 @@ import {
 
 /**
  * Signs the operator out after the admin console has seen no activity for the
- * idle window (72 hours).
+ * idle window (24 hours).
  *
- * WHY: the backend expires a console refresh token 72 hours after its last use,
+ * WHY: the backend expires a console refresh token 24 hours after its last use,
  * so an abandoned session can never be silently resumed — but the server only
  * learns of the gap when a request finally arrives. A tab left open overnight
  * would otherwise sit on a fully rendered dashboard indefinitely, long after the

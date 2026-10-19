@@ -202,7 +202,13 @@ async function attemptRotate(): Promise<RotateResult> {
     })
 
     if (!response.ok) {
-      return { ok: false, rejected: response.status === 401 || response.status === 403 }
+      // 400 means the request carried no usable refresh credential at all
+      // ("Refresh token is required") - there is nothing left to recover, so
+      // clear the session instead of leaving the console in a 401 retry loop.
+      return {
+        ok: false,
+        rejected: response.status === 400 || response.status === 401 || response.status === 403,
+      }
     }
 
     const json = (await response.json()) as { accessToken?: string; token?: string }

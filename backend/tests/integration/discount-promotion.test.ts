@@ -170,6 +170,9 @@ describe('Discount & Promotional Campaign Engine Integration Tests', () => {
       await prisma.payment.deleteMany({
         where: { order: { userId: { in: userIds } } },
       })
+      await prisma.invoice.deleteMany({
+        where: { order: { userId: { in: userIds } } },
+      })
       await prisma.order.deleteMany({
         where: { userId: { in: userIds } },
       })
@@ -419,6 +422,10 @@ describe('Discount & Promotional Campaign Engine Integration Tests', () => {
           name: `Sankranti Harvest Festival ${timestamp}`,
           slug: promoSlug,
           description: 'Celebrate harvest with pure Vedic organic spices',
+          title: `Sankranti Harvest ${timestamp}`,
+          subtitle: 'Up to 15% off organic spices and herbal teas',
+          destinationUrl: '/collections/sankranti-harvest',
+          ctaLabel: 'Shop the harvest',
           bannerImageUrl: 'https://cdn.vedhicfoods.com/banners/sankranti-harvest.webp',
           discountType: 'PERCENTAGE',
           discountValue: 15,
@@ -436,7 +443,17 @@ describe('Discount & Promotional Campaign Engine Integration Tests', () => {
       expect(res.status).toBe(201)
       expect(res.body.success).toBe(true)
       expect(res.body.data.slug).toBe(promoSlug)
+      expect(res.body.data.title).toBe(`Sankranti Harvest ${timestamp}`)
+      expect(res.body.data.subtitle).toBe('Up to 15% off organic spices and herbal teas')
+      expect(res.body.data.destinationUrl).toBe('/collections/sankranti-harvest')
+      expect(res.body.data.ctaLabel).toBe('Shop the harvest')
       promotionId = res.body.data.id
+
+      const persisted = await prisma.promotion.findUnique({ where: { id: promotionId } })
+      expect(persisted?.title).toBe(`Sankranti Harvest ${timestamp}`)
+      expect(persisted?.subtitle).toBe('Up to 15% off organic spices and herbal teas')
+      expect(persisted?.destinationUrl).toBe('/collections/sankranti-harvest')
+      expect(persisted?.ctaLabel).toBe('Shop the harvest')
 
       // Verify PROMOTION_CREATED audit log
       const audit = await prisma.auditLog.findFirst({
@@ -453,6 +470,10 @@ describe('Discount & Promotional Campaign Engine Integration Tests', () => {
       const found = res.body.data.find((p: any) => p.id === promotionId)
       expect(found).toBeDefined()
       expect(found.slug).toBe(promoSlug)
+      expect(found.title).toBe(`Sankranti Harvest ${timestamp}`)
+      expect(found.subtitle).toBe('Up to 15% off organic spices and herbal teas')
+      expect(found.destinationUrl).toBe('/collections/sankranti-harvest')
+      expect(found.ctaLabel).toBe('Shop the harvest')
     })
 
     it('GET /api/v1/promotions/:slug should retrieve promotion by slug', async () => {
@@ -469,10 +490,24 @@ describe('Discount & Promotional Campaign Engine Integration Tests', () => {
         .send({
           priority: 20,
           description: 'Updated harvest festival description',
+          title: `Updated Sankranti Harvest ${timestamp}`,
+          subtitle: 'Fresh harvest offers for a limited time',
+          destinationUrl: '/collections/festival-specials',
+          ctaLabel: 'Explore offers',
         })
 
       expect(res.status).toBe(200)
       expect(res.body.data.priority).toBe(20)
+      expect(res.body.data.title).toBe(`Updated Sankranti Harvest ${timestamp}`)
+      expect(res.body.data.subtitle).toBe('Fresh harvest offers for a limited time')
+      expect(res.body.data.destinationUrl).toBe('/collections/festival-specials')
+      expect(res.body.data.ctaLabel).toBe('Explore offers')
+
+      const persisted = await prisma.promotion.findUnique({ where: { id: promotionId } })
+      expect(persisted?.title).toBe(`Updated Sankranti Harvest ${timestamp}`)
+      expect(persisted?.subtitle).toBe('Fresh harvest offers for a limited time')
+      expect(persisted?.destinationUrl).toBe('/collections/festival-specials')
+      expect(persisted?.ctaLabel).toBe('Explore offers')
     })
   })
 

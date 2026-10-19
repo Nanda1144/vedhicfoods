@@ -1,3 +1,5 @@
 export { Testimonials } from './Testimonials'
 export { HeroSlider } from './HeroSlider'
 export type { HeroSliderProps } from './HeroSlider'
+export { PromotionBanner } from './PromotionBanner'
+export type { PromotionBannerProps } from './PromotionBanner'

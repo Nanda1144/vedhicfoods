@@ -38,6 +38,7 @@ export const SITE = {
 export const DEFAULT_WEBSITE_SETTINGS: WebsiteSettings = {
   brandName: SITE.brandName,
   tagline: SITE.tagline,
+  logoUrl: '',
   supportEmail: SITE.supportEmail,
   supportPhone: SITE.supportPhone,
   whatsapp: SITE.whatsapp,

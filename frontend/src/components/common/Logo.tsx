@@ -18,11 +18,16 @@ export function Logo({ size = 'md', tone = 'dark', to = '/', className }: LogoPr
   const markSize = MARK_SIZES[size]
   const root = cn('logo', `logo--${tone}`, className)
   const brandName = settings.brandName || 'Vedhic Foods'
+  const logoUrl = (settings.logoUrl ?? '').trim()
 
   return (
-    <Link to={to} className={root} aria-label={`${brandName} — Home`}>
-      <span className="logo__mark">
-        <Icon name="leaf" size={markSize * 0.52} strokeWidth={1.5} />
+    <Link to={to} className={root} aria-label={`${brandName} - Home`}>
+      <span className={cn('logo__mark', logoUrl && 'logo__mark--image')}>
+        {logoUrl ? (
+          <img className="logo__image" src={logoUrl} alt="" />
+        ) : (
+          <Icon name="leaf" size={markSize * 0.52} strokeWidth={1.5} />
+        )}
       </span>
       <span className={cn('logo__text', WORD_SIZES[size])}>
         <span className="logo__brand">{brandName}</span>

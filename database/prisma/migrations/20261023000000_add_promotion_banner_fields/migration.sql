@@ -1,0 +1,4 @@
+ALTER TABLE "promotions" ADD COLUMN IF NOT EXISTS "title" TEXT;
+ALTER TABLE "promotions" ADD COLUMN IF NOT EXISTS "subtitle" TEXT;
+ALTER TABLE "promotions" ADD COLUMN IF NOT EXISTS "destinationUrl" TEXT;
+ALTER TABLE "promotions" ADD COLUMN IF NOT EXISTS "ctaLabel" TEXT;

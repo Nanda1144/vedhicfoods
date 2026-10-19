@@ -31,13 +31,13 @@ export const LAST_ACTIVITY_KEY = 'vedhic.admin.lastActivity.v1'
  * Idle window for the admin console, in milliseconds.
  *
  * Mirrors `AuthService.CONSOLE_SESSION_IDLE_TTL_HOURS` on the backend: the
- * server expires a console refresh token 72 hours after its last use, so a
+ * server expires a console refresh token 24 hours after its last use, so a
  * session left untouched for longer than this can no longer be recovered. This
  * client-side constant paces the proactive watcher so an idle tab is dropped to
  * the login screen at the same moment rather than waiting for the next request
  * to fail.
  */
-export const ADMIN_IDLE_TIMEOUT_MS = 72 * 60 * 60 * 1000
+export const ADMIN_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000
 
 /** Fired when the session can no longer be recovered (refresh rejected). */
 export const ADMIN_SESSION_EXPIRED_EVENT = 'vedhic:admin:auth:expired'

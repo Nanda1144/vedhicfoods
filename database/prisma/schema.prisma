@@ -12,6 +12,7 @@ model User {
   email                   String                   @unique
   phone                   String?                  @unique
   fullName                String
+  employeeId              String?                  @unique
   passwordHash            String
   isActive                Boolean                  @default(true)
   isVerified              Boolean                  @default(false)

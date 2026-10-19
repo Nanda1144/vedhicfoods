@@ -423,14 +423,16 @@ function mapTicket(raw: any): SupportTicket {
 
 function mapStaff(raw: any): StaffMember {
   const isActive = raw.isActive !== false
-  const notActivated = !raw.isVerified || !raw.lastLoginAt
   return {
     id: raw.id,
     name: raw.fullName ?? '',
     email: raw.email ?? '',
     phone: raw.phone ?? '',
+    employeeId: raw.employeeId ?? undefined,
     role: (BACKEND_ROLE_NAMES[raw.role] ?? 'staff') as RoleName,
-    status: !isActive && notActivated ? 'invited' : !isActive ? 'suspended' : 'active',
+    // Accounts are created with an admin-set password, never invited, so the
+    // only two reachable states are active and suspended.
+    status: isActive ? 'active' : 'suspended',
     title: raw.roles?.[0]?.name,
     permissions: Array.isArray(raw.permissions) ? raw.permissions.map((permission: any) => permission.slug ?? permission) : undefined,
     createdAt: iso(raw.createdAt) ?? '',
@@ -1091,10 +1093,13 @@ export const adminService = {
       password: input.password,
       phone: input.phone || undefined,
       role,
+      employeeId: input.employeeId || undefined,
+      status: input.status === 'suspended' ? 'suspended' : 'active',
       permissionSlugs,
     }
     const created = await apiFetchRaw<any>('/admin/staff', { method: 'POST', body: JSON.stringify(body) }, options)
-    const staff = mapStaff(unwrap(created) ?? created)
+    // The endpoint replies `{ success, message, staff }` rather than `{ data }`.
+    const staff = mapStaff(created?.staff ?? unwrap(created) ?? created)
     if (permissionSlugs) {
       await apiFetchRaw<any>(`/admin/staff/${staff.id}/permissions`, { method: 'PATCH', body: JSON.stringify({ permissionSlugs }) }, options)
     }
@@ -1102,10 +1107,11 @@ export const adminService = {
   },
 
   async updateStaff(id: string, patch: Partial<StaffMember>, options?: RequestOptions) {
-    const { name, role, status, phone, permissions } = patch
+    const { name, role, status, phone, employeeId, permissions } = patch
     const body: Record<string, unknown> = {}
     if (name !== undefined) body.fullName = name
     if (phone !== undefined) body.phone = phone
+    if (employeeId !== undefined) body.employeeId = employeeId
     if (role !== undefined) body.role = role.toUpperCase()
     if (status !== undefined) body.isActive = status === 'active'
     if (Object.keys(body).length > 0) {

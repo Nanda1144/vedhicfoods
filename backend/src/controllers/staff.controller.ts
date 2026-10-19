@@ -42,6 +42,26 @@ export class StaffController {
   }
 
   /**
+   * Allocates the next sequential `EMP-0001` style identifier.
+   *
+   * Custom identifiers are allowed, so this scans existing values instead of
+   * ordering lexicographically. The unique column still arbitrates the rare
+   * concurrent-create race.
+   */
+  private static async nextEmployeeId(): Promise<string> {
+    const rows = await prisma.user.findMany({
+      where: { employeeId: { not: null } },
+      select: { employeeId: true },
+    })
+    let highest = 0
+    for (const row of rows) {
+      const match = /^EMP-(\d+)$/i.exec(row.employeeId ?? '')
+      if (match) highest = Math.max(highest, Number(match[1]))
+    }
+    return `EMP-${String(highest + 1).padStart(4, '0')}`
+  }
+
+  /**
    * GET /api/v1/admin/staff
    * Lists all administrative and operational staff accounts.
    */
@@ -128,6 +148,7 @@ export class StaffController {
           fullName: u.fullName,
           email: u.email,
           phone: u.phone,
+          employeeId: u.employeeId,
           role: u.role,
           roles: Array.from(roleSet),
           permissions: Array.from(permSet),
@@ -190,6 +211,7 @@ export class StaffController {
         fullName: user.fullName,
         email: user.email,
         phone: user.phone,
+        employeeId: user.employeeId,
         role: primaryRole,
         roles,
         permissions,
@@ -218,7 +240,8 @@ export class StaffController {
         return
       }
 
-      const { fullName, email, password, phone, role, permissionSlugs } = parsed.data
+      const { fullName, email, password, phone, role, permissionSlugs, status, employeeId } =
+        parsed.data
       const cleanEmail = email.toLowerCase().trim()
 
       // SECURITY: the previous guard only special-cased OWNER, which meant an
@@ -275,6 +298,20 @@ export class StaffController {
         return
       }
 
+      // Employee ids are unique across every user (including customers), so a
+      // supplied id must be checked before the insert. An omitted id is
+      // allocated here rather than in the browser, where it was previously
+      // generated and then discarded by the API.
+      const resolvedEmployeeId = employeeId?.trim() || (await StaffController.nextEmployeeId())
+      const employeeIdTaken = await prisma.user.findFirst({
+        where: { employeeId: resolvedEmployeeId },
+        select: { id: true },
+      })
+      if (employeeIdTaken) {
+        res.status(409).json({ error: 'That employee ID is already in use.' })
+        return
+      }
+
       const passwordHash = await AuthService.hashPassword(password)
       const targetRole = await prisma.role.findUnique({ where: { name: role } })
 
@@ -283,10 +320,11 @@ export class StaffController {
           data: {
             email: cleanEmail,
             fullName,
+            employeeId: resolvedEmployeeId,
             phone: phone || null,
             passwordHash,
             role,
-            isActive: true,
+            isActive: status === 'active',
             isVerified: true,
           },
         })
@@ -345,6 +383,7 @@ export class StaffController {
           fullName: newStaff.fullName,
           email: newStaff.email,
           phone: newStaff.phone,
+          employeeId: newStaff.employeeId,
           role: newStaff.role,
           roles,
           permissions,
@@ -406,8 +445,15 @@ export class StaffController {
         action: 'updateStaff',
       })
 
+      // `status` is the newer, explicit form; `isActive` remains for older
+      // clients. `status` wins when both are present.
+      const nextActive =
+        parsed.data.status !== undefined
+          ? parsed.data.status === 'active'
+          : parsed.data.isActive
+
       // Prevent disabling the only active OWNER
-      if (existingStaff.role === RoleName.OWNER && parsed.data.isActive === false) {
+      if (existingStaff.role === RoleName.OWNER && nextActive === false) {
         const ownerCount = await prisma.user.count({
           where: { role: RoleName.OWNER, isActive: true, isDeleted: false },
         })
@@ -417,10 +463,22 @@ export class StaffController {
         }
       }
 
+      if (parsed.data.employeeId !== undefined) {
+        const employeeIdTaken = await prisma.user.findFirst({
+          where: { employeeId: parsed.data.employeeId, id: { not: id } },
+          select: { id: true },
+        })
+        if (employeeIdTaken) {
+          res.status(409).json({ error: 'That employee ID is already in use.' })
+          return
+        }
+      }
+
       const updateData: any = {}
       if (parsed.data.fullName !== undefined) updateData.fullName = parsed.data.fullName
       if (parsed.data.phone !== undefined) updateData.phone = parsed.data.phone
-      if (parsed.data.isActive !== undefined) updateData.isActive = parsed.data.isActive
+      if (parsed.data.employeeId !== undefined) updateData.employeeId = parsed.data.employeeId
+      if (nextActive !== undefined) updateData.isActive = nextActive
       if (parsed.data.role !== undefined) updateData.role = parsed.data.role
 
       const updated = await prisma.$transaction(async (tx) => {
@@ -449,9 +507,9 @@ export class StaffController {
       const { roles, permissions } = await AuthService.resolveUserPermissions(updated.id)
 
       const auditAction =
-        parsed.data.isActive === false
+        nextActive === false
           ? 'STAFF_DISABLED'
-          : parsed.data.isActive === true && existingStaff.isActive === false
+          : nextActive === true && existingStaff.isActive === false
             ? 'STAFF_REACTIVATED'
             : 'STAFF_UPDATED'
 
@@ -467,13 +525,13 @@ export class StaffController {
         req,
       })
 
-      if (parsed.data.isActive === false) {
+      if (nextActive === false) {
         await StaffController.adminAlert({
           eventKey: `staff_disabled:${updated.id}`,
           action: 'Staff account disabled',
           detail: `${updated.fullName} (${updated.email}) was deactivated.`,
         })
-      } else if (parsed.data.isActive === true && existingStaff.isActive === false) {
+      } else if (nextActive === true && existingStaff.isActive === false) {
         await StaffController.adminAlert({
           eventKey: `staff_reactivated:${updated.id}`,
           action: 'Staff account reactivated',
@@ -489,6 +547,7 @@ export class StaffController {
           fullName: updated.fullName,
           email: updated.email,
           phone: updated.phone,
+          employeeId: updated.employeeId,
           role: updated.role,
           roles,
           permissions,

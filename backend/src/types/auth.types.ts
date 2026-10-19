@@ -71,6 +71,13 @@ export const verifyEmailSchema = z.object({
 
 export type VerifyEmailInput = z.infer<typeof verifyEmailSchema>
 
+export const employeeIdSchema = z
+  .string()
+  .trim()
+  .min(1, 'Employee ID is required')
+  .max(40, 'Employee ID is too long')
+  .regex(/^[A-Za-z0-9-]+$/, 'Employee ID may only contain letters, numbers and hyphens')
+
 export const createStaffSchema = z.object({
   fullName: z.string().trim().min(2, 'Full name must be at least 2 characters').max(100),
   email: z.string().trim().toLowerCase().email('Invalid email address'),
@@ -78,6 +85,9 @@ export const createStaffSchema = z.object({
   phone: z.string().trim().regex(/^\+?[0-9]{10,15}$/, 'Invalid phone number').optional(),
   role: z.nativeEnum(RoleName).default(RoleName.STAFF),
   permissionSlugs: z.array(z.string()).optional(),
+  /** Omit to allocate the next sequential id (EMP-0001, EMP-0002, …). */
+  employeeId: employeeIdSchema.optional(),
+  status: z.enum(['active', 'suspended']).default('active'),
 })
 
 export type CreateStaffInput = z.infer<typeof createStaffSchema>
@@ -86,6 +96,8 @@ export const updateStaffSchema = z.object({
   fullName: z.string().trim().min(2).max(100).optional(),
   phone: z.string().trim().regex(/^\+?[0-9]{10,15}$/).optional(),
   isActive: z.boolean().optional(),
+  status: z.enum(['active', 'suspended']).optional(),
+  employeeId: employeeIdSchema.optional(),
   role: z.nativeEnum(RoleName).optional(),
   permissionSlugs: z.array(z.string()).optional(),
 })

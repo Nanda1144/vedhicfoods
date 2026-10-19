@@ -323,6 +323,7 @@ function InviteModal({
     name: '',
     email: '',
     phone: '',
+    employeeId: '',
     password: '',
     role: defaultRole,
     photo: '',
@@ -367,7 +368,7 @@ function InviteModal({
         password: form.password,
         role: form.role,
         status: 'active' as const,
-        employeeId: `EMP-${String(302 + Math.floor(Math.random() * 900))}`,
+        employeeId: form.employeeId.trim() || undefined,
         permissions: privileged ? undefined : effectivePermissions,
         photo: form.photo,
         address: form.address.trim(),
@@ -410,6 +411,9 @@ function InviteModal({
           </Field>
            <Field label="Phone">
              <Input type="tel" value={form.phone} onChange={(event) => setForm((c) => ({ ...c, phone: event.target.value }))} placeholder="+91 …" />
+           </Field>
+           <Field label="Employee ID" hint="Optional. Leave blank to allocate the next EMP-#### automatically.">
+             <Input value={form.employeeId} onChange={(event) => setForm((c) => ({ ...c, employeeId: event.target.value }))} placeholder="EMP-0001" />
            </Field>
            <Field label="Login password" required hint="Set the password the staff member signs in with (at least 8 characters, one letter and one number).">
              <Input type="password" value={form.password} onChange={(event) => setForm((c) => ({ ...c, password: event.target.value }))} required minLength={8} />
@@ -477,6 +481,7 @@ function StaffEditModal({
 }) {
   const { push } = useToast()
   const [role, setRole] = useState<RoleName>(member.role)
+  const [employeeId, setEmployeeId] = useState(member.employeeId ?? '')
   const [status, setStatus] = useState<StaffMember['status']>(member.status === 'suspended' ? 'suspended' : 'active')
   const [permissions, setPermissions] = useState<Permission[]>(
     member.permissions ?? roleDefaults(roles, member.role),
@@ -504,6 +509,7 @@ function StaffEditModal({
       await adminService.updateStaff(member.id, {
         role,
         status,
+        employeeId: employeeId.trim() || undefined,
         permissions: privileged ? undefined : permissions.length > 0 ? [...permissions] : undefined,
       })
       push({ title: 'Staff updated', description: `${member.name} saved.` })
@@ -539,6 +545,9 @@ function StaffEditModal({
           </Field>
           <Field label="Email">
             <Input value={member.email} disabled />
+          </Field>
+          <Field label="Employee ID">
+            <Input value={employeeId} onChange={(event) => setEmployeeId(event.target.value)} placeholder="EMP-0001" />
           </Field>
           <Field label="Role">
             <Select

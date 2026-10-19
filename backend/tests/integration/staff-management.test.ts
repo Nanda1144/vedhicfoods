@@ -248,6 +248,72 @@ describe('Staff Account Management & RBAC Security', () => {
       expect(res.body.staff.role).toBe(RoleName.STAFF)
       createdUserIds.push(res.body.staff.id)
     })
+
+    it('allocates an EMP-#### employee ID when none is supplied', async () => {
+      const email = `staffmgmt.employee.auto.${suffix}@vedhicfoods.test`
+      const res = await request(app)
+        .post(`${API}/admin/staff`)
+        .set(auth(tokens.owner))
+        .send({ fullName: 'Auto Employee ID', email, password: PASSWORD, role: RoleName.STAFF })
+
+      expect(res.status).toBe(201)
+      expect(res.body.staff.employeeId).toMatch(/^EMP-\d{4,}$/)
+      createdUserIds.push(res.body.staff.id)
+
+      const read = await request(app)
+        .get(`${API}/admin/staff/${res.body.staff.id}`)
+        .set(auth(tokens.owner))
+      expect(read.body.employeeId).toBe(res.body.staff.employeeId)
+    })
+
+    it('honours a supplied employee ID and rejects a duplicate with 409', async () => {
+      const employeeId = `EMP-IT-${suffix}`
+      const res = await request(app)
+        .post(`${API}/admin/staff`)
+        .set(auth(tokens.owner))
+        .send({
+          fullName: 'Supplied Employee ID',
+          email: `staffmgmt.employee.supplied.${suffix}@vedhicfoods.test`,
+          password: PASSWORD,
+          role: RoleName.STAFF,
+          employeeId,
+        })
+
+      expect(res.status).toBe(201)
+      expect(res.body.staff.employeeId).toBe(employeeId)
+      createdUserIds.push(res.body.staff.id)
+
+      const duplicate = await request(app)
+        .post(`${API}/admin/staff`)
+        .set(auth(tokens.owner))
+        .send({
+          fullName: 'Duplicate Employee ID',
+          email: `staffmgmt.employee.duplicate.${suffix}@vedhicfoods.test`,
+          password: PASSWORD,
+          role: RoleName.STAFF,
+          employeeId,
+        })
+
+      expect(duplicate.status).toBe(409)
+      expect(duplicate.body.error).toContain('already in use')
+    })
+
+    it('persists a suspended status requested at creation', async () => {
+      const email = `staffmgmt.employee.suspended.${suffix}@vedhicfoods.test`
+      const res = await request(app)
+        .post(`${API}/admin/staff`)
+        .set(auth(tokens.owner))
+        .send({ fullName: 'Suspended At Creation', email, password: PASSWORD, role: RoleName.STAFF, status: 'suspended' })
+
+      expect(res.status).toBe(201)
+      expect(res.body.staff.isActive).toBe(false)
+      createdUserIds.push(res.body.staff.id)
+
+      const read = await request(app)
+        .get(`${API}/admin/staff/${res.body.staff.id}`)
+        .set(auth(tokens.owner))
+      expect(read.body.isActive).toBe(false)
+    })
   })
 
   // ==========================================================================
@@ -291,6 +357,56 @@ describe('Staff Account Management & RBAC Security', () => {
         .send({})
       expect(res.status).toBe(200)
       expect(res.body.staff.id).toBe(ids.createdA)
+    })
+
+    it('updates an employee ID and refuses one already held by another account', async () => {
+      const employeeId = `EMP-UPD-${suffix}`
+      const res = await request(app)
+        .patch(`${API}/admin/staff/${ids.createdA}`)
+        .set(auth(tokens.owner))
+        .send({ employeeId })
+
+      expect(res.status).toBe(200)
+      expect(res.body.staff.employeeId).toBe(employeeId)
+
+      const other = await request(app)
+        .post(`${API}/admin/staff`)
+        .set(auth(tokens.owner))
+        .send({
+          fullName: 'Employee ID Holder',
+          email: `staffmgmt.employee.holder.${suffix}@vedhicfoods.test`,
+          password: PASSWORD,
+          role: RoleName.STAFF,
+          employeeId: `EMP-HOLDER-${suffix}`,
+        })
+      expect(other.status).toBe(201)
+      createdUserIds.push(other.body.staff.id)
+
+      const conflict = await request(app)
+        .patch(`${API}/admin/staff/${ids.createdA}`)
+        .set(auth(tokens.owner))
+        .send({ employeeId: `EMP-HOLDER-${suffix}` })
+
+      expect(conflict.status).toBe(409)
+      expect(conflict.body.error).toContain('already in use')
+    })
+
+    it('the explicit status field wins over the legacy isActive flag', async () => {
+      const suspend = await request(app)
+        .patch(`${API}/admin/staff/${ids.createdA}`)
+        .set(auth(tokens.owner))
+        .send({ status: 'suspended', isActive: true })
+
+      expect(suspend.status).toBe(200)
+      expect(suspend.body.staff.isActive).toBe(false)
+
+      const restore = await request(app)
+        .patch(`${API}/admin/staff/${ids.createdA}`)
+        .set(auth(tokens.owner))
+        .send({ status: 'active' })
+
+      expect(restore.status).toBe(200)
+      expect(restore.body.staff.isActive).toBe(true)
     })
 
     it('an admin cannot edit another ADMIN (lateral reach denied with 403, not 500)', async () => {

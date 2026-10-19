@@ -60,11 +60,26 @@ for (const file of [`.env.${environmentName}`, '.env']) {
  * that known topology instead of failing boot on a variable that the platform
  * itself determines. Any explicit TRUST_PROXY value (including `false` in a
  * non-Render deployment) still wins.
+ *
+ * `RENDER=true` is the documented marker, but a value is only guaranteed for
+ * native (non-Docker) services; Docker services and preview environments have
+ * been seen with only the `RENDER_*` family populated. Treat any of them as
+ * proof of the platform so a first Docker deploy does not fail boot on a
+ * topology Render itself fixes.
  */
+function isRunningOnRender(): boolean {
+  return (
+    (process.env.RENDER ?? '').toLowerCase() === 'true' ||
+    Boolean(process.env.RENDER_SERVICE_ID) ||
+    Boolean(process.env.RENDER_EXTERNAL_HOSTNAME) ||
+    Boolean(process.env.RENDER_INSTANCE_ID)
+  )
+}
+
 if (
   environmentName === 'production' &&
   !(process.env.TRUST_PROXY ?? '').trim() &&
-  (process.env.RENDER ?? '').toLowerCase() === 'true'
+  isRunningOnRender()
 ) {
   process.env.TRUST_PROXY = '1'
 }

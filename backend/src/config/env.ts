@@ -195,6 +195,32 @@ const envSchema = z.object({
     .preprocess(v => (v === undefined || v === '' ? 'true' : v), z.enum(['true', 'false']))
     .transform(v => v === 'true'),
 
+  // Durable email outbox.
+  //
+  // When enabled, `EmailQueue.enqueue` persists the message to the
+  // `email_outbox` table before returning and a background worker delivers it
+  // with retry/backoff, so queued mail is not lost when an instance restarts or
+  // a rolling deploy replaces it. Left unset it defaults to enabled everywhere
+  // except the unit-test environment, which has no database and exercises the
+  // in-memory queue instead.
+  EMAIL_OUTBOX_ENABLED: z
+    .preprocess(v => (v === undefined || v === '' ? undefined : v), z.enum(['true', 'false']).optional())
+    .transform(v => (v === undefined ? undefined : v === 'true')),
+  EMAIL_OUTBOX_INTERVAL_MS: z.coerce.number().int().positive().default(15_000),
+  EMAIL_OUTBOX_BATCH_SIZE: z.coerce.number().int().positive().max(500).default(25),
+
+  // Abandoned-checkout reservation reaper.
+  //
+  // Orders left in PENDING_PAYMENT longer than RESERVATION_TTL_MS have their
+  // held stock released and are cancelled, so an abandoned Razorpay checkout
+  // does not lock inventory forever. `RESERVATION_SWEEP_ENABLED` defaults on.
+  RESERVATION_SWEEP_ENABLED: z
+    .preprocess(v => (v === undefined || v === '' ? undefined : v), z.enum(['true', 'false']).optional())
+    .transform(v => (v === undefined ? undefined : v === 'true')),
+  RESERVATION_TTL_MS: z.coerce.number().int().positive().default(30 * 60 * 1000),
+  RESERVATION_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(5 * 60 * 1000),
+  RESERVATION_SWEEP_BATCH: z.coerce.number().int().positive().max(1000).default(100),
+
   // Logging
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])

@@ -187,6 +187,34 @@ export function CheckoutPage() {
     }
   }
 
+  /**
+   * Cash on Delivery — no gateway is involved. The backend confirms the order
+   * immediately and records the payment as pending collection on delivery
+   * (`checkout.service.ts` COD branch). Placing the order IS the whole flow.
+   *
+   * This path is required: `payOnline` unconditionally creates a Razorpay order
+   * and opens the checkout modal, so routing COD through it charged the customer
+   * online despite their choosing to pay on delivery.
+   */
+  const payCod = async (): Promise<void> => {
+    if (hasStockIssues) {
+      warnStockIssues()
+      return
+    }
+    setPlacing(true)
+    try {
+      const order = await placeCheckout()
+      goToSuccess(order)
+    } catch (caught) {
+      push({
+        title: 'Order could not be placed',
+        description: caught instanceof Error ? caught.message : 'Please try again.',
+      })
+      setPlacing(false)
+      throw caught
+    }
+  }
+
   const stepTitles: Record<number, string> = {
     1: '1 · Who are we delivering to?',
     2: '2 · Where should we deliver?',
@@ -305,7 +333,7 @@ export function CheckoutPage() {
                     amount={totals.total}
                     method={payment}
                     methodLabel={METHOD_LABELS[payment]}
-                    onPay={payOnline}
+                    onPay={payment === 'cod' ? payCod : payOnline}
                     onBack={() => setStep(3)}
                     disabled={hasStockIssues}
                   />

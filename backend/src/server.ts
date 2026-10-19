@@ -4,6 +4,8 @@ import { env, loadedEnvFiles } from './config/env'
 import { logger } from './config/logger'
 import { checkDatabaseConnection, disconnectDatabase } from './config/database'
 import { closeRealtime } from './events/realtime'
+import { EmailOutboxWorker } from './services/email-outbox.service'
+import { ReservationSweepService } from './services/reservation-sweep.service'
 
 async function bootstrap(): Promise<void> {
   // Names only, never contents. This is what answers "which environment's
@@ -60,7 +62,22 @@ async function bootstrap(): Promise<void> {
     )
   })
 
-  // 5. Graceful Shutdown Handler
+  // 5. Background workers.
+  //
+  // Both are safe to run on every instance: the email outbox claims rows with
+  // `FOR UPDATE SKIP LOCKED`, and the reservation sweep serialises itself with
+  // an advisory transaction lock. They start only when the database is
+  // reachable, so a production task never ticks against a dead pool.
+  if (isDbReady) {
+    if (env.EMAIL_OUTBOX_ENABLED ?? env.NODE_ENV !== 'test') {
+      EmailOutboxWorker.start(env.EMAIL_OUTBOX_INTERVAL_MS)
+    }
+    if (env.RESERVATION_SWEEP_ENABLED ?? true) {
+      ReservationSweepService.start(env.RESERVATION_SWEEP_INTERVAL_MS)
+    }
+  }
+
+  // 6. Graceful Shutdown Handler
   //
   // MULTI-INSTANCE: during a rolling deploy the load balancer starts sending
   // traffic to the *new* task only once the old one reports unhealthy, but
@@ -95,6 +112,8 @@ async function bootstrap(): Promise<void> {
       // Drop SSE connections and drain/close the realtime Redis pub/sub clients
       // before the process exits, so a rolling deploy does not leak connections.
       await closeRealtime()
+      EmailOutboxWorker.stop()
+      ReservationSweepService.stop()
       await disconnectDatabase()
 
       logger.info('Graceful shutdown completed successfully. Exiting process.')

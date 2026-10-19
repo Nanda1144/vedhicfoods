@@ -345,12 +345,19 @@ export class ProductService {
     limit: number,
     isAdmin: boolean,
   ) {
+    // Hard cap on candidates materialised from the ranked FTS query. This is a
+    // public, unauthenticated endpoint: without a bound, a short broadcast term
+    // ("a") pulls every matching id into the Node heap and then emits a giant
+    // `IN (...)`. 5000 sits far above any realistic storefront page depth, so
+    // normal result sets are unaffected while the worst case stays bounded.
+    const MAX_SEARCH_CANDIDATES = 5000
     const ranked = await prisma.$queryRaw<Array<{ id: string }>>`
       SELECT "id"
       FROM "products"
       WHERE "search_vector" @@ websearch_to_tsquery('english', ${search})
       ORDER BY ts_rank("search_vector", websearch_to_tsquery('english', ${search})) DESC,
                "id" ASC
+      LIMIT ${MAX_SEARCH_CANDIDATES}
     `
 
     const rankedIds = ranked.map((row) => row.id)

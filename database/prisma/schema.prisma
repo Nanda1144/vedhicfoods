@@ -1152,3 +1152,39 @@ model NewsletterSubscriber {
   @@index([isActive])
   @@map("newsletter_subscribers")
 }
+
+// Durable transactional email outbox. Replaces the process-local retry queue so
+// a rolling deploy or crash cannot lose queued password-reset, order-confirmation
+// or invoice mail; any instance can drain it. See EmailOutboxWorker.
+model EmailOutbox {
+  id                String            @id @default(uuid())
+  toAddress         String            @map("to_address")
+  toName            String?           @map("to_name")
+  subject           String
+  htmlBody          String            @map("html_body")
+  textBody          String?           @map("text_body")
+  fromEmail         String?           @map("from_email")
+  templateName      String            @map("template_name")
+  attachmentName    String?           @map("attachment_name")
+  attachmentContent String?           @map("attachment_content")
+  status            EmailOutboxStatus @default(PENDING)
+  attempts          Int               @default(0)
+  maxAttempts       Int               @default(3) @map("max_attempts")
+  lastError         String?           @map("last_error")
+  dedupeKey         String?           @unique @map("dedupe_key")
+  nextAttemptAt     DateTime          @default(now()) @map("next_attempt_at")
+  lockedAt          DateTime?         @map("locked_at")
+  sentAt            DateTime?         @map("sent_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  @@index([status, nextAttemptAt])
+  @@map("email_outbox")
+}
+
+enum EmailOutboxStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}

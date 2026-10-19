@@ -91,6 +91,7 @@ export function PaymentGateway({ amount, method, methodLabel, onPay, onBack, dis
     )
   }
 
+  const isCod = method === 'cod'
   const methodLabelFor = method === 'razorpay' ? 'Razorpay · UPI / Card / Netbanking' : methodLabel
 
   return (
@@ -101,11 +102,19 @@ export function PaymentGateway({ amount, method, methodLabel, onPay, onBack, dis
         </span>
         <span className="payment-gateway__method">{methodLabelFor}</span>
       </div>
-      <Button size="lg" fullWidth icon="lock" onClick={() => void startPayment()} disabled={disabled}>
-        Pay {formatCurrency(amount)} securely
+      <Button size="lg" fullWidth icon={isCod ? 'check' : 'lock'} onClick={() => void startPayment()} disabled={disabled}>
+        {isCod ? `Place order · Pay ${formatCurrency(amount)} on delivery` : `Pay ${formatCurrency(amount)} securely`}
       </Button>
       <p className="payment-gateway__secure">
-        <Icon name="shield" size={14} /> 256-bit encrypted · Razorpay · no money moves without your confirmation
+        {isCod ? (
+          <>
+            <Icon name="rupee" size={14} /> Pay in cash when your order is delivered
+          </>
+        ) : (
+          <>
+            <Icon name="shield" size={14} /> 256-bit encrypted · Razorpay · no money moves without your confirmation
+          </>
+        )}
       </p>
     </div>
   )

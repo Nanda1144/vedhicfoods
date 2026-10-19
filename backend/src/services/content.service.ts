@@ -461,19 +461,20 @@ export class ContentService {
 
     // Keep the product's cached `reviewCount` and `rating` in step so the store
     // card, detail page and filter counts never disagree with the review list.
-    if (input.isApproved) {
-      const [count, avg] = await Promise.all([
-        prisma.productReview.count({ where: { productId: updated.productId, isApproved: true } }),
-        prisma.productReview.aggregate({
-          where: { productId: updated.productId, isApproved: true },
-          _avg: { rating: true },
-        }),
-      ])
-      await prisma.product.update({
-        where: { id: updated.productId },
-        data: { reviewCount: count, rating: Math.round(((avg._avg.rating ?? 0) + Number.EPSILON) * 10) / 10 },
-      })
-    }
+    // This must run on APPROVE *and* on REJECT/un-approve: recomputing only when
+    // approving left the storefront showing a rating/count that still included a
+    // review which had just been pulled from the approved set.
+    const [count, avg] = await Promise.all([
+      prisma.productReview.count({ where: { productId: updated.productId, isApproved: true } }),
+      prisma.productReview.aggregate({
+        where: { productId: updated.productId, isApproved: true },
+        _avg: { rating: true },
+      }),
+    ])
+    await prisma.product.update({
+      where: { id: updated.productId },
+      data: { reviewCount: count, rating: Math.round(((avg._avg.rating ?? 0) + Number.EPSILON) * 10) / 10 },
+    })
 
     await AuditService.record({
       action: input.isApproved ? 'REVIEW_APPROVED' : 'REVIEW_REJECTED',

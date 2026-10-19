@@ -592,7 +592,9 @@ describe('Date-Windowed Reporting API', () => {
       const counts = new Map(
         (res.body.rows as Array<{ date: string; orders: number }>).map((r) => [r.date, r.orders])
       )
-      const weekDayCount = counts.get(tWeek.toISOString().slice(0, 10)) ?? 0
+      // The current week spans Monday..now, so anchor on today's paid order
+      // (a fixed "N days ago" seed can fall before the week start on Mon/Tue).
+      const weekDayCount = counts.get(tToday.toISOString().slice(0, 10)) ?? 0
       expect(weekDayCount).toBeGreaterThan(0)
     })
 

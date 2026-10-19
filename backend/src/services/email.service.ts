@@ -1,10 +1,21 @@
 import { emailTransport } from '../integrations/email/email-transport'
-import { EmailDeliveryError, isRetryableEmailError } from '../integrations/email/email-errors'
-import { EmailSuppressionService } from '../integrations/email/email-suppression.service'
+import { isRetryableEmailError } from '../integrations/email/email-errors'
 import { logger } from '../config/logger'
 import { env } from '../config/env'
 import { BRANDING } from '../config/branding'
 import { EmailTemplates, TemplateVariables } from '../templates/email-templates'
+import { deliverQueuedEmail, isAnyRecipientSuppressed } from './email-delivery'
+import { EmailOutboxService } from './email-outbox.service'
+
+/**
+ * Whether queued mail is persisted to the durable outbox.
+ *
+ * Defaults on in every environment except unit tests, which run without a
+ * database and must exercise the in-memory queue created by `EmailQueue.enqueue`.
+ */
+function isOutboxEnabled(): boolean {
+  return env.EMAIL_OUTBOX_ENABLED ?? env.NODE_ENV !== 'test'
+}
 
 export interface QueuedEmail {
   id: string
@@ -66,8 +77,14 @@ function sleep(ms: number): Promise<void> {
 /**
  * In-process email retry queue.
  *
- * MULTI-INSTANCE LIMITATION: `queue`, `isProcessing` and `processingTimeout`
- * are module-level, so this queue is **per-instance and non-durable**:
+ * Only used when the durable outbox is disabled (`EMAIL_OUTBOX_ENABLED=false`,
+ * or `NODE_ENV=test`, which has no database). When the outbox is enabled,
+ * `EmailQueue.enqueue` persists the message and `EmailOutboxWorker` performs the
+ * retries instead of the loop below.
+ *
+ * MULTI-INSTANCE LIMITATION (in-memory path only): `queue`, `isProcessing` and
+ * `processingTimeout` are module-level, so this queue is **per-instance and
+ * non-durable**:
  *
  *  - Emails enqueued by instance A are invisible to instance B. That is fine
  *    because a given request is handled by exactly one instance and the queue
@@ -199,47 +216,54 @@ export class EmailQueue {
 
   /** True when any recipient of the message is on the suppression list. */
   private static async anySuppressed(to: string | string[]): Promise<boolean> {
-    const recipients = Array.isArray(to) ? to : [to]
-    for (const address of recipients) {
-      if (address && (await EmailSuppressionService.isSuppressed(address))) return true
-    }
-    return false
+    return isAnyRecipientSuppressed(to)
   }
 
   private static async attemptSend(email: QueuedEmail): Promise<void> {
-    if (email.attachment) {
-      const toEmail = Array.isArray(email.to) ? email.to[0] : email.to
-      const sent = await emailTransport.sendAttachmentEmail({
-        toEmail,
-        toName: email.toName ?? toEmail,
-        subject: email.subject,
-        htmlContent: email.htmlBody,
-        attachment: email.attachment,
-      })
-      if (!sent) {
-        throw new EmailDeliveryError('Email attachment delivery failed', {
-          provider: emailTransport.providerName(),
-          retryable: true,
-        })
-      }
-      return
-    }
-
-    await emailTransport.sendTransactionalEmail({
+    return deliverQueuedEmail({
       to: email.to,
+      toName: email.toName,
       subject: email.subject,
-      htmlContent: email.htmlBody,
-      textContent: email.textBody,
+      htmlBody: email.htmlBody,
+      textBody: email.textBody,
       fromEmail: email.fromEmail,
+      attachment: email.attachment,
     })
   }
 
-  public static enqueue(
+  public static async enqueue(
     email: Omit<QueuedEmail, 'id' | 'attempts' | 'createdAt' | 'status' | 'sentAt' | 'maxAttempts'> & {
       maxAttempts?: number
     },
-  ): string {
+  ): Promise<string> {
     const id = `email_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+
+    // Durable path: persist before returning so a restart cannot lose the mail.
+    if (isOutboxEnabled()) {
+      const persistedId = await EmailOutboxService.enqueue({
+        to: email.to,
+        toName: email.toName,
+        subject: email.subject,
+        htmlBody: email.htmlBody,
+        textBody: email.textBody,
+        fromEmail: email.fromEmail,
+        templateName: email.templateName,
+        maxAttempts: email.maxAttempts,
+        dedupeKey: email.dedupeKey,
+        attachment: email.attachment,
+      })
+
+      if (persistedId === null) {
+        logger.info(
+          { dedupeKey: email.dedupeKey, template: email.templateName },
+          'Duplicate email suppressed (idempotency key)'
+        )
+        return id
+      }
+
+      logger.info({ id: persistedId, template: email.templateName, recipient: email.to }, 'Email queued (durable outbox)')
+      return persistedId
+    }
 
     if (email.dedupeKey && !EmailQueue.claimDedupe(email.dedupeKey)) {
       logger.info(
@@ -495,7 +519,7 @@ export class EmailService {
       return null
     }
 
-    const queued = EmailQueue.enqueue({
+    const queued = await EmailQueue.enqueue({
       to: recipient,
       subject,
       htmlBody: html,

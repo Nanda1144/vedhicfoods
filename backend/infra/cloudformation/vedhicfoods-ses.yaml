@@ -174,7 +174,10 @@ Resources:
 Outputs:
   DomainIdentityArn:
     Description: ARN of the verified sending identity. Use it in the TaskRole SES policy.
-    Value: !GetAtt DomainIdentity.EmailIdentity
+    # NOTE: AWS::SES::EmailIdentity exposes only DkimDNSTokenName*/Value* — there is
+    # no `EmailIdentity` attribute, so `!GetAtt DomainIdentity.EmailIdentity` failed
+    # output resolution and rolled the whole stack back. Compose the identity ARN.
+    Value: !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${DomainName}'
 
   ConfigurationSetName:
     Description: >-

@@ -180,44 +180,96 @@ export class InvoiceService {
       )
     }
 
-    const invoiceNumber = await this.generateInvoiceNumber()
+    // Create the authoritative invoice row first, then archive the PDF on a
+    // best-effort basis. The row is what makes a paid order "invoiced" and the
+    // PDF can be regenerated on demand, so an object-storage outage must not
+    // leave a paid order without an invoice.
+    //
+    // `invoiceNumber` and `orderId` are both unique, so concurrent captures
+    // (webhook racing client-side verification) collapse onto a single row. On
+    // the rare sequential-number collision we retry with a fresh number.
+    const MAX_INVOICE_ATTEMPTS = 5
+    let invoice: { id: string; invoiceNumber: string; total: unknown } | null = null
+    let pdfData: InvoiceData | null = null
+    let pdfBuffer: Buffer | null = null
 
-    // Generate PDF
-    const pdfData = this.buildInvoiceData(order, invoiceNumber)
-    const pdfBuffer = await InvoiceGenerator.generateA4Pdf(pdfData)
+    for (let attempt = 1; attempt <= MAX_INVOICE_ATTEMPTS; attempt++) {
+      const invoiceNumber = await this.generateInvoiceNumber()
+      const candidateData = this.buildInvoiceData(order, invoiceNumber)
+      const candidateBuffer = await InvoiceGenerator.generateA4Pdf(candidateData)
 
-    // Upload to S3
-    const s3Key = `${this.S3_KEY_PREFIX}/${order.userId}/${invoiceNumber}.pdf`
-    const pdfUrl = await S3Service.uploadDocument({
-      key: s3Key,
-      body: pdfBuffer,
-      contentType: 'application/pdf',
-      metadata: {
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        invoiceNumber,
-        customerEmail: order.customerEmail,
-      },
-    })
+      try {
+        invoice = await prisma.invoice.create({
+          data: {
+            invoiceNumber,
+            orderId: order.id,
+            userId: order.userId,
+            status: InvoiceStatus.ISSUED,
+            invoiceDate: new Date(),
+            subtotal: order.subtotal,
+            discount: order.discount,
+            shipping: order.shipping,
+            tax: order.tax,
+            total: order.total,
+            paymentStatus: order.paymentStatus,
+          },
+        })
+        pdfData = candidateData
+        pdfBuffer = candidateBuffer
+        break
+      } catch (error: any) {
+        if (error?.code !== 'P2002') throw error
 
-    // Create invoice record
-    const invoice = await prisma.invoice.create({
-      data: {
-        invoiceNumber,
-        orderId: order.id,
-        userId: order.userId,
-        status: InvoiceStatus.ISSUED,
-        invoiceDate: new Date(),
-        subtotal: order.subtotal,
-        discount: order.discount,
-        shipping: order.shipping,
-        tax: order.tax,
-        total: order.total,
-        paymentStatus: order.paymentStatus,
-        s3PdfKey: s3Key,
-        pdfUrl,
-      },
-    })
+        // Either a concurrent capture already created this order's invoice, or
+        // the sequential number was taken between generation and insert.
+        const raced = await prisma.invoice.findUnique({ where: { orderId: order.id } })
+        if (raced) {
+          logger.info(
+            { orderId, invoiceId: raced.id },
+            'Invoice creation raced with a concurrent capture; returning existing invoice'
+          )
+          return this.getInvoiceById(raced.id) as Promise<InvoiceWithRelations>
+        }
+
+        logger.warn(
+          { orderId, invoiceNumber, attempt },
+          'Invoice number collision; retrying with the next number'
+        )
+      }
+    }
+
+    if (!invoice || !pdfData || !pdfBuffer) {
+      throw new AppError(
+        'Could not allocate a unique invoice number',
+        HTTP_STATUS.CONFLICT,
+        ERROR_CODES.CONFLICT
+      )
+    }
+
+    // Best-effort archival copy in object storage.
+    const s3Key = `${this.S3_KEY_PREFIX}/${order.userId}/${invoice.invoiceNumber}.pdf`
+    try {
+      const pdfUrl = await S3Service.uploadDocument({
+        key: s3Key,
+        body: pdfBuffer,
+        contentType: 'application/pdf',
+        metadata: {
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          invoiceNumber: invoice.invoiceNumber,
+          customerEmail: order.customerEmail,
+        },
+      })
+      await prisma.invoice.update({
+        where: { id: invoice.id },
+        data: { s3PdfKey: s3Key, pdfUrl },
+      })
+    } catch (storageError: any) {
+      logger.error(
+        { error: storageError.message, invoiceId: invoice.id },
+        'Invoice PDF upload failed; invoice kept, PDF remains available on demand'
+      )
+    }
 
     // Link the invoice back onto the order (so `order.invoiceId` resolves for
     // order-success/invoice lookups) and promote the order to CONFIRMED if it is
@@ -232,7 +284,7 @@ export class InvoiceService {
       },
     })
 
-    logger.info({ invoiceId: invoice.id, invoiceNumber, orderId }, 'Invoice created successfully')
+    logger.info({ invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, orderId }, 'Invoice created successfully')
 
     // Send the tax invoice (A4 PDF attached) to the customer, plus a printable
     // confirmation copy to the admin. Both are best-effort: invoice generation
@@ -412,8 +464,11 @@ export class InvoiceService {
     userId: string,
     isAdmin = false
   ): Promise<string> {
-    const invoice = await prisma.invoice.findUnique({
-      where: { id: invoiceId },
+    // Accept the internal UUID or the human-readable INV-YYYY-XXXXXX number, the
+    // same as every other invoice endpoint. `findUnique({ id })` rejected the
+    // number form that the controller/UI and the PDF route both accept.
+    const invoice = await prisma.invoice.findFirst({
+      where: { OR: [{ id: invoiceId }, { invoiceNumber: invoiceId }] },
     })
 
     if (!invoice) {

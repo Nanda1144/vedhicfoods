@@ -973,6 +973,7 @@
   z-index: var(--z-raised);
   background: color-mix(in srgb, var(--color-surface-raised) 82%, transparent);
   color: var(--color-text);
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 
@@ -1084,6 +1085,7 @@
   background: color-mix(in srgb, #000 22%, transparent);
   border-color: color-mix(in srgb, var(--color-text-inverse) 55%, transparent);
   color: var(--color-text-inverse);
+  -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
 }
 
@@ -1105,6 +1107,7 @@
   border-color: color-mix(in srgb, var(--color-text-inverse) 32%, transparent);
   background: color-mix(in srgb, #000 26%, transparent);
   color: var(--color-text-inverse);
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 
@@ -1168,6 +1171,7 @@
   background: color-mix(in srgb, #000 28%, transparent);
   color: var(--color-text-inverse);
   cursor: pointer;
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
   transition: background-color 0.25s var(--ease-in-out);
 }
@@ -1363,8 +1367,10 @@
     -webkit-box-decoration-break: clone;
   }
 
+  /* Mobile only: nudge the subtitle down so it sits clear of the heading. */
   .hero__lead {
     font-size: var(--text-body);
+    margin-top: var(--space-3);
   }
 
   /* Mobile only: compact the hero action buttons. */

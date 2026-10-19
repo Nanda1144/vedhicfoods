@@ -950,6 +950,7 @@
   z-index: var(--z-raised);
   background: color-mix(in srgb, var(--color-surface-raised) 82%, transparent);
   color: var(--color-text);
+  -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
 }
 

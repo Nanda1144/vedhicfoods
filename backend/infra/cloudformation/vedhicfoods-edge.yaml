@@ -292,7 +292,7 @@ Resources:
       Subnets: !Ref PublicSubnetIds
       SecurityGroups: !If
         - CreateLoadBalancerSecurityGroup
-        - [!Ref 'AWS::NoValue', !Ref LoadBalancerSecurityGroup]
+        - [!Ref LoadBalancerSecurityGroup]
         - [!Ref SecurityGroupId]
       # `routing.http2.enabled` stays on: it is what lets a browser reuse one
       # connection for the SPA's many parallel API calls.

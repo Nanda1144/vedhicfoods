@@ -228,10 +228,22 @@ Resources:
             Principal:
               Service: rds.amazonaws.com
             Action:
+              # RDS needs Decrypt/CreateGrant/DescribeKey to attach the key to the
+              # instance and the master-user secret, and GenerateDataKey for
+              # Performance Insights. Withholding CreateGrant made DB/PI/secret
+              # creation fail unless the deploying principal supplied it.
               - kms:Decrypt
+              - kms:GenerateDataKey
               - kms:GenerateDataKeyWithoutPlaintext
               - kms:DescribeKey
+              - kms:CreateGrant
+              - kms:ReEncryptFrom
+              - kms:ReEncryptTo
             Resource: '*'
+            Condition:
+              StringEquals:
+                kms:ViaService: !Sub 'rds.${AWS::Region}.amazonaws.com'
+                kms:CallerAccount: !Ref AWS::AccountId
       Tags:
         - Key: ManagedBy
           Value: CloudFormation
@@ -285,10 +297,11 @@ Resources:
         # A statement cancelled while waiting on a lock. This is how deadlocks and
         # long transactions announce themselves; invisible by default.
         log_lock_waits: '1'
+        # Log temp files larger than 1 KB. Temp-file churn means a query is
+        # sorting or hashing on disk because work_mem is too small for it.
+        # (There is no `log_temp_files_limit` in PostgreSQL — that key is rejected
+        # by RDS parameter groups and would fail the stack deploy.)
         log_temp_files: '1'
-        # Log every temp file over 0 KB. Temp-file churn means a query is sorting
-        # or hashing on disk because work_mem is too small for it.
-        log_temp_files_limit: '0'
         # Makes crash-restart and clean-shutdown events attributable. Cheap, and it
         # distinguishes a clean restart from an OOM kill.
         log_checkpoints: '1'

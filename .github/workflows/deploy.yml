@@ -166,6 +166,23 @@ jobs:
       - name: Generate Prisma client
         run: npm run prisma:generate
 
+      # Capture the rollback target BEFORE anything is changed. Reading it at the
+      # end would capture the already-updated revision, so a failed rollout would
+      # "roll back" to the broken one.
+      - name: Capture current service task definition
+        run: |
+          set -euo pipefail
+          PREVIOUS=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' --output text --region "$AWS_REGION")
+          if [ -z "$PREVIOUS" ] || [ "$PREVIOUS" = "None" ]; then
+            echo "::error::Could not resolve the running task definition; refusing to deploy without a rollback target"
+            exit 1
+          fi
+          echo "Rollback target: $PREVIOUS"
+          echo "PREVIOUS_TASK_DEFINITION=$PREVIOUS" >> "$GITHUB_ENV"
+
       # -------------------------------------------------------------------------
       # Migrations as a one-off task.
       #
@@ -195,15 +212,36 @@ jobs:
           set -euo pipefail
           echo "Applying migrations from ${IMAGE_TAG}"
 
+          # Resolve the container name from the migration task definition rather
+          # than assuming it stays "backend".
+          MIGRATION_CONTAINER=$(aws ecs describe-task-definition \
+            --task-definition "$ECS_TASK_DEFINITION" \
+            --query 'taskDefinition.containerDefinitions[0].name' --output text --region "$AWS_REGION")
+          if [ -z "$MIGRATION_CONTAINER" ] || [ "$MIGRATION_CONTAINER" = "None" ]; then
+            echo "::error::Could not resolve the migration task's container name from $ECS_TASK_DEFINITION"
+            exit 1
+          fi
+
+          # PIN THE IMAGE. The migration task definition is a long-lived resource;
+          # without an explicit image override it runs whatever stale image it was
+          # last registered with. The deploy would then report success while
+          # applying the *previous* release's migrations (or none at all), and the
+          # new image would start against a schema it was not built for.
+          #
           # `run-task` must be called exactly once. Placing the task is what starts
           # the migration, so capturing the ARN has to come from the same call -
           # issuing a second one to get the ARN would apply every migration twice.
+          OVERRIDES=$(jq -n \
+            --arg name "$MIGRATION_CONTAINER" \
+            --arg image "$IMAGE_TAG" \
+            '{containerOverrides: [{name: $name, image: $image, command: ["./node_modules/.bin/prisma", "migrate", "deploy", "--schema", "database/prisma/schema.prisma"]}]}')
+
           TASK_ARN=$(aws ecs run-task \
             --cluster "$ECS_CLUSTER" \
             --task-definition "$ECS_TASK_DEFINITION" \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS]}" \
-            --overrides "{\"containerOverrides\":[{\"name\":\"backend\",\"command\":[\"./node_modules/.bin/prisma\",\"migrate\",\"deploy\",\"--schema\",\"database/prisma/schema.prisma\"]}]}" \
+            --overrides "$OVERRIDES" \
             --query 'tasks[0].taskArn' --output text --region "$AWS_REGION")
 
           if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
@@ -343,3 +381,35 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           IMAGE: ${{ vars.ECR_REGISTRY }}/${{ vars.ECR_REPOSITORY }}:${{ env.DEPLOY_SHA }}
+
+      # Automatic image rollback.
+      #
+      # Without this, a failed readiness check leaves the *broken* revision
+      # serving production: the workflow goes red, but ECS keeps the new task
+      # definition. Restoring the revision captured before the rollout returns
+      # the service to the last known-good image.
+      #
+      # SCHEMA CAVEAT: this rolls back code, not the database. Migrations are
+      # required to be expand-and-contract (see PRODUCTION_RUNBOOK.md); reverting
+      # the image is safe only while the previous release still reads the expanded
+      # schema. If a migration was destructive, restore from the pre-deploy
+      # snapshot instead of relying on this step.
+      - name: Roll back on failure
+        if: failure()
+        run: |
+          set -euo pipefail
+          if [ -z "${PREVIOUS_TASK_DEFINITION:-}" ]; then
+            echo "::warning::No previous task definition was captured; roll back manually using PRODUCTION_RUNBOOK.md."
+            exit 0
+          fi
+          echo "::warning::Deployment failed; restoring $ECS_SERVICE to $PREVIOUS_TASK_DEFINITION"
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$PREVIOUS_TASK_DEFINITION" \
+            --region "$AWS_REGION" >/dev/null
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --region "$AWS_REGION"
+          echo "::error::Deployment failed and the service was rolled back. Investigate this run before retrying."

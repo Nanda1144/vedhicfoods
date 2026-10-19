@@ -12,7 +12,13 @@ function toCsv(rows: Array<Record<string, any>>): string {
   const headers = [...new Set(rows.flatMap((r) => Object.keys(r)))]
   const escape = (v: unknown): string => {
     const s = v === null || v === undefined ? '' : String(v)
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    // Neutralise spreadsheet formula injection (CSV injection). Excel, Sheets
+    // and LibreOffice execute a cell that begins with = + - @ (or a leading
+    // tab/CR) as a formula, so user-influenced values such as a guest customer
+    // name or an admin-entered product name could run on an operator's machine.
+    // A leading apostrophe forces the cell to be treated as text.
+    const guarded = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s
+    return /[",\n]/.test(guarded) ? `"${guarded.replace(/"/g, '""')}"` : guarded
   }
   const lines = [headers.join(',')]
   for (const row of rows) {

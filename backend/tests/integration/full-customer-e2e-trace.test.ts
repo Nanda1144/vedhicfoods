@@ -226,6 +226,14 @@ describe('Full End-to-End Customer Trace Suite', () => {
       .send({ status: OrderStatus.PROCESSING })
     expect(updateToProcessing.status).toBe(200)
 
+    // The state machine requires PROCESSING -> PACKED -> SHIPPED; shipping
+    // straight from PROCESSING is rejected with 409.
+    const updateToPacked = await request(app)
+      .put(`/api/v1/admin/orders/${orderId}/status`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: OrderStatus.PACKED })
+    expect(updateToPacked.status).toBe(200)
+
     const updateDelivery = await request(app)
       .put(`/api/v1/admin/orders/${orderId}/status`)
       .set('Authorization', `Bearer ${adminToken}`)
@@ -237,7 +245,7 @@ describe('Full End-to-End Customer Trace Suite', () => {
       .get(`/api/v1/orders/${orderId}`)
       .set('Authorization', `Bearer ${customerToken}`)
     expect(customerOrder.status).toBe(200)
-    expect(customerOrder.body.data.status).toBe(OrderStatus.SHIPPED)
+    expect(customerOrder.body.status).toBe(OrderStatus.SHIPPED)
   })
 
   describe('Edge Cases & Failure Recovery Scenarios', () => {

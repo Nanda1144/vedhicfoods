@@ -149,9 +149,15 @@ export class PaymentController {
       })
     } catch (error: any) {
       logger.error({ error: error.message }, 'Razorpay webhook processing error')
-      // Return 200 for non-signature errors to prevent Razorpay retrying unnecessarily
-      // Signature errors return 401 so Razorpay knows the request was invalid
-      const statusCode = error.statusCode === 401 ? 401 : 200
+      // Status codes drive Razorpay's retry behaviour:
+      //   401 — signature invalid; the request is not from Razorpay. Never retry.
+      //   400 — malformed payload we can never process. Never retry.
+      //   5xx — anything else (DB blip, transient dependency failure). Razorpay
+      //         MUST retry, otherwise a captured payment silently never confirms
+      //         its order/inventory. Processing is idempotent (CAS state gate +
+      //         unique constraints), so a retry is safe.
+      const statusCode =
+        error.statusCode === 401 ? 401 : error.statusCode === 400 ? 400 : 500
       res.status(statusCode).json({
         success: false,
         error:

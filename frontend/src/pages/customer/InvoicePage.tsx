@@ -82,8 +82,17 @@ export function InvoicePage() {
                 orderTokenStore.get(data.orderId) ??
                 orderTokenStore.get(data.id)
               invoiceService.fetchPdf(data.id, token ? { orderToken: token } : undefined).then((blob) => {
+                // Anchor download, not window.open: Safari blocks opening a
+                // blob: URL in a new tab, and the popup blocker fires in every
+                // browser once the response arrives asynchronously (after an
+                // await), so the click is no longer inside the user gesture.
                 const url = URL.createObjectURL(blob)
-                window.open(url, '_blank')
+                const link = document.createElement('a')
+                link.href = url
+                link.download = `${data.invoiceNumber || 'invoice'}.pdf`
+                document.body.appendChild(link)
+                link.click()
+                link.remove()
                 window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
               }).catch(() => {
                 // Fallback to print only after a genuine download failure

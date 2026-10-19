@@ -549,8 +549,8 @@ describe('Production Checkout & Order Creation Workflow Integration Tests', () =
         .set('Authorization', `Bearer ${customerAToken}`)
 
       expect(cartAfter.status).toBe(200)
-      expect(cartAfter.body.itemCount).toBe(0)
-      expect(cartAfter.body.items.length).toBe(0)
+      expect(cartAfter.body.data.itemCount).toBe(0)
+      expect(cartAfter.body.data.items.length).toBe(0)
     })
   })
 })

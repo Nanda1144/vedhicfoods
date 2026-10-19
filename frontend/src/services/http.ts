@@ -207,6 +207,33 @@ function refreshCustomerSession(failedAccessToken: string | null): Promise<boole
   return crossTabRefresh
 }
 
+/**
+ * Generates a request id without assuming `crypto.randomUUID` exists.
+ *
+ * `crypto.randomUUID` is only defined in a secure context (https/localhost) and
+ * Safari did not add it until 15.4, so calling it directly threw
+ * `TypeError: crypto.randomUUID is not a function` before every request — which
+ * breaks the entire storefront on http staging and older Safari. Prefer the
+ * native method, fall back to `getRandomValues`, then to a time-based id.
+ */
+function createRequestId(): string {
+  const webCrypto = typeof crypto !== 'undefined' ? crypto : undefined
+
+  if (webCrypto && typeof webCrypto.randomUUID === 'function') {
+    return webCrypto.randomUUID()
+  }
+
+  if (webCrypto && typeof webCrypto.getRandomValues === 'function') {
+    const bytes = webCrypto.getRandomValues(new Uint8Array(16))
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+  }
+
+  return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
+
 /** Real HTTP client to communicate with the Vedhic Foods backend. */
 export async function apiFetch<T>(
   endpoint: string,
@@ -215,7 +242,7 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
 
-  const requestId = crypto.randomUUID()
+  const requestId = createRequestId()
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -316,7 +343,7 @@ export async function apiFetchBlob(
   options?: RequestOptions,
 ): Promise<Blob> {
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
-  const requestId = crypto.randomUUID()
+  const requestId = createRequestId()
 
   const headers: Record<string, string> = {
     'x-request-id': requestId,

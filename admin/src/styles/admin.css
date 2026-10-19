@@ -121,6 +121,7 @@
   padding: var(--space-3) var(--space-6);
   border-bottom: var(--border-subtle);
   background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  -webkit-backdrop-filter: saturate(150%) blur(10px);
   backdrop-filter: saturate(150%) blur(10px);
 }
 

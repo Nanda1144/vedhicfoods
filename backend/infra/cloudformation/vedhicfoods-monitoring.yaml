@@ -63,14 +63,12 @@ Parameters:
   # ---------------------------------------------------------------------------
   LoadBalancerFullName:
     Type: String
-    Default: app/vedhicfoods-api/edg-vedhicfoods-alb
     Description: >-
       ALB "LoadBalancer.FullName", as shown on the ALB console. That is
       app/<name>/<id> - NOT the DNS name and NOT the ARN.
 
   TargetGroupFullName:
     Type: String
-    Default: targetgroup/vedhicfoods-api/vedhicfoods-api-tg
     Description: >-
       Target group "TargetGroupFullName" from the target group console, in the
       form targetgroup/<name>/<id>.
@@ -245,9 +243,9 @@ Resources:
       # would undercount.
       FilterPattern: >-
         { $.msg = "Failed to create Razorpay order" } or
-        { $.msg = "Unable to fetch payment from Razorpay - refusing to confirm" } or
+        { $.msg = "Unable to fetch payment from Razorpay — refusing to confirm" } or
         { $.msg = "Payment verification failed: the payment is not linked to this order. This incident has been logged." } or
-        { $.msg = "Razorpay settlement does not match the recorded amount - payment rejected" } or
+        { $.msg = "Razorpay settlement does not match the recorded amount — payment rejected" } or
         { $.msg = "Razorpay webhook processing error" }
       MetricTransformations:
         - MetricNamespace: VedhicFoods/Integrations
@@ -261,9 +259,9 @@ Resources:
     Properties:
       LogGroupName: !Ref ApplicationLogGroupName
       FilterPattern: >-
-        { $.msg = "Razorpay signature length mismatch - possible tampering attempt" } or
-        { $.msg = "Razorpay payment signature verification FAILED - invalid signature" } or
-        { $.msg = "Razorpay webhook signature verification failed - rejecting webhook" } or
+        { $.msg = "Razorpay signature length mismatch — possible tampering attempt" } or
+        { $.msg = "Razorpay payment signature verification FAILED — invalid signature" } or
+        { $.msg = "Razorpay webhook signature verification failed — rejecting webhook" } or
         { $.msg = "Razorpay webhook received without signature header" } or
         { $.msg = "Razorpay webhook received without a capturable raw body" }
       MetricTransformations:
@@ -311,7 +309,11 @@ Resources:
       LogGroupName: !Ref DatabaseLogGroupName
       # postgres emits e.g.
       #   2026-01-01 00:00:00 UTC [123] LOG:  duration: 812.345 ms  statement: SELECT ...
-      FilterPattern: '?LOG ?[0-9]+ ?duration: [0-9]{3,}'
+      # A quoted substring term, not a regex: CloudWatch only interprets regex
+      # inside %...% and treats `[0-9]{3,}` literally, so the previous pattern
+      # matched nothing. Anything at/above log_min_duration_statement carries the
+      # literal text `duration:`.
+      FilterPattern: '"duration:"'
       MetricTransformations:
         - MetricNamespace: VedhicFoods/Database
           MetricName: SlowQueries
@@ -325,8 +327,10 @@ Resources:
       LogGroupName: !Ref DatabaseLogGroupName
       # PostgreSQL logs are plain text, not JSON, so this is a term filter rather
       # than a JSON filter:
-      #   2026-01-01 00:00:00 UTC [123] ERROR:  relation "Order" does not exist
-      FilterPattern: '" ERROR: "'
+      #   2026-01-01 00:00:00 UTC [123]:ERROR:  relation "Order" does not exist
+      # RDS prefixes the message with `[pid]:ERROR:` (no leading space), so the
+      # older `" ERROR: "` term never matched.
+      FilterPattern: '"ERROR:"'
       MetricTransformations:
         - MetricNamespace: VedhicFoods/Database
           MetricName: DatabaseErrors
@@ -743,28 +747,17 @@ Resources:
   # With MultiAZ, the standby must promote within its failover window. If it does
   # not, a failover takes as long as the instance timeout - and the storefront is
   # down for all of it.
-  DatabaseFailoverAlarm:
-    Type: AWS::CloudWatch::Alarm
+  # NOTE: RDS publishes no `FailoverCount` metric, so the previous alarm could
+  # never fire. Failover is an *event*, not a metric — the correct mechanism is an
+  # RDS event subscription (failover category) wired to the alarm topic.
+  DatabaseFailoverEventSubscription:
+    Type: AWS::RDS::EventSubscription
     Properties:
-      AlarmName: !Sub '${AWS::StackName}-rds-failover'
-      AlarmDescription: >-
-        A MultiAZ failover has occurred. This reports an AZ-level problem that has
-        already taken the primary offline, rather than leaving it to be discovered
-        from customer complaints.
-      Namespace: AWS/RDS
-      MetricName: FailoverCount
-      Dimensions:
-        - Name: DBInstanceIdentifier
-          Value: !Ref DatabaseInstanceIdentifier
-      Statistic: Maximum
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 0
-      ComparisonOperator: GreaterThanThreshold
-      TreatMissingData: notBreaching
-      AlarmActions: [!Ref AlarmTopic]
-      OKActions: [!Ref AlarmTopic]
-      InsufficientDataActions: [!Ref AlarmTopic]
+      EventCategories: [failover]
+      SnsTopicArn: !Ref AlarmTopic
+      SourceType: db-instance
+      SourceIds: [!Ref DatabaseInstanceIdentifier]
+      Enabled: true
 
   DatabaseSlowQueryAlarm:
     Type: AWS::CloudWatch::Alarm

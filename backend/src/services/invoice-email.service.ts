@@ -81,7 +81,7 @@ export class InvoiceEmailService {
   public static async sendOrderConfirmedInvoiceEmail(data: InvoiceData): Promise<boolean> {
     try {
       const pdfBuffer = await InvoiceGenerator.generateA4Pdf(data)
-      EmailQueue.enqueue({
+      await EmailQueue.enqueue({
         to: data.customerEmail,
         toName: data.customerName,
         subject: `Order Confirmed: ${data.orderNumber} - Vedhic Foods Tax Invoice`,
@@ -112,7 +112,7 @@ export class InvoiceEmailService {
    */
   public static async sendAdminInvoiceEmail(data: InvoiceData, pdfBuffer: Buffer): Promise<boolean> {
     try {
-      EmailQueue.enqueue({
+      await EmailQueue.enqueue({
         to: EmailService.adminRecipient(),
         toName: 'Vedhic Foods Admin',
         subject: `[Admin Copy] Paid Order ${data.orderNumber} — Invoice ${data.invoiceNumber}`,

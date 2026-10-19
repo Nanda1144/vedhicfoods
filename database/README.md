@@ -226,11 +226,19 @@ places the database password on a command line - `pg_dump` receives it through
 It is scheduled by [`.github/workflows/db-backup.yml`](../.github/workflows/db-backup.yml),
 which runs daily at 19:00 UTC (00:30 IST) and can also be dispatched manually.
 
+**It runs inside the VPC.** The production database is not publicly reachable and
+this repository provisions no bastion, so a GitHub-hosted runner cannot reach it.
+The workflow therefore builds `database/backup.Dockerfile` (postgresql-client +
+AWS CLI + this script) and runs it as a **Fargate one-off task** in the same
+cluster, subnets and security group as the service - the same private path the
+migration task uses. `DATABASE_URL` is injected by the backup task definition's
+`secrets` block and never touches the runner.
+
 ### Configuration
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
-| `DATABASE_URL` | yes* | - | PostgreSQL connection string. Use the Supabase **direct** (5432) or session-pooler string, never the transaction pooler (6543). |
+| `DATABASE_URL` | yes* | - | PostgreSQL connection string. Use the direct (5432) or session-pooler string, never the transaction pooler (6543). In the workflow this is injected by the task definition, not set on the runner. |
 | `BACKUP_DATABASE_URL` | no | - | Overrides `DATABASE_URL` for the backup only. |
 | `BACKUP_S3_BUCKET` | yes | - | Destination bucket. Use a dedicated, versioned, encrypted, non-public bucket - not the media bucket. |
 | `BACKUP_S3_PREFIX` | no | `database-backups/` | Key prefix; a trailing slash is added if missing. |
@@ -248,16 +256,21 @@ neither is present.
 
 Set these repository **variables** (Settings -> Secrets and variables -> Actions
 -> Variables; none is confidential). No GitHub secret is needed: the database
-credential stays in AWS Secrets Manager and is read at run time.
+credential stays in AWS Secrets Manager and is injected into the task.
 
 | Variable | Purpose |
 |---|---|
 | `AWS_REGION` | Region for the OIDC session and every `aws` call. |
-| `AWS_BACKUP_ROLE_ARN` | OIDC role the workflow assumes. Scope it to `s3:PutObject`, `s3:GetObject`, `s3:ListBucket`, `s3:DeleteObject` (and `s3:AbortMultipartUpload`) on the backup bucket/prefix, plus `secretsmanager:GetSecretValue` on the `DATABASE_URL` secret. |
+| `AWS_BACKUP_ROLE_ARN` | OIDC role the workflow assumes. It pushes the backup image to ECR (`ecr:GetAuthorizationToken`, `BatchCheckLayerAvailability`, `InitiateLayerUpload`, `UploadLayerPart`, `CompleteLayerUpload`, `PutImage`), runs the task (`ecs:RunTask`, `ecs:DescribeTasks`, `ecs:DescribeTaskDefinition`) and passes the task's execution/task roles (`iam:PassRole`). It no longer needs `secretsmanager:GetSecretValue`. |
+| `ECR_REGISTRY` | ECR registry endpoints, e.g. `<account>.dkr.ecr.<region>.amazonaws.com`. |
+| `ECR_REPOSITORY` | ECR repo the backup image is pushed to (distinct `backup-<sha>` tag). |
+| `ECS_CLUSTER_NAME` | Cluster the one-off backup task runs in. |
+| `ECS_BACKUP_TASK_DEFINITION` | Backup task definition family: private VPC subnets, `DATABASE_URL` in its `secrets` block, and a task role scoped to the backup bucket (`s3:PutObject`, `s3:GetObject`, `s3:ListBucket`, `s3:DeleteObject`, `s3:AbortMultipartUpload`). |
+| `PRIVATE_SUBNET_IDS` | Comma-separated private subnet ids for the task's awsvpc config. |
+| `TASK_SECURITY_GROUP_ID` | Security group with egress to the database and S3. |
 | `BACKUP_S3_BUCKET` | Destination bucket. |
 | `BACKUP_S3_PREFIX` | Optional key prefix. |
 | `BACKUP_RETENTION_DAYS` | Optional retention (default 30). |
-| `DATABASE_URL_SECRET_ID` | Optional; defaults to `vedhicfoods/backend/DATABASE_URL`, the secret `backend/infra/scripts/create-secrets.ps1` already creates. |
 
 The backup role needs an OIDC trust policy like the deploy role's (see
 `backend/infra/README.md`), scoped to this repository and to the branch the

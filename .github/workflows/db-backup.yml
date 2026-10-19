@@ -6,45 +6,67 @@
 #   format), validates the archive with pg_restore, uploads it to S3, verifies the
 #   uploaded byte count, and deletes backups older than BACKUP_RETENTION_DAYS.
 #   The script is the single source of truth for behaviour; this workflow only
-#   supplies credentials and configuration. See database/README.md
+#   supplies an environment to run it in and configuration. See database/README.md
 #   ("Automated backups") for the full reference.
+#
+# WHY IT RUNS AS AN ECS TASK, NOT ON THE RUNNER
+#   The production database (vedhicfoods-database.yaml) is `PubliclyAccessible:
+#   false` in private subnets, and this repository provisions no bastion or SSM
+#   tunnel. A GitHub-hosted runner therefore has no network path to it, so a
+#   runner-local `pg_dump` fails to connect. Instead this workflow builds a small
+#   backup image (database/backup.Dockerfile: postgresql-client + AWS CLI + the
+#   script), and runs it as a Fargate one-off task in the same cluster, subnets
+#   and security group as the service - the same private path the migration task
+#   uses. DATABASE_URL never leaves AWS: it is injected by the task definition's
+#   `secrets` block, not fetched onto the runner.
 #
 # AUTHENTICATION - GitHub OIDC, not stored keys (same model as deploy.yml):
 #   A short-lived OIDC token is exchanged for credentials scoped to one IAM role.
 #   Nothing long-lived is stored in the repository or on the runner.
 #
 # SECRET HANDLING:
-#   - No database credential is stored in GitHub. DATABASE_URL is read at run
-#     time from AWS Secrets Manager (the same secret the backend task already
-#     uses), then masked with ::add-mask:: so it cannot appear in a log.
-#   - The script never places the password on a command line; pg_dump receives
-#     it through PGPASSWORD in the environment.
+#   - No database credential is ever present on the runner. The dump runs inside
+#     the VPC against a task that reads DATABASE_URL from Secrets Manager.
+#   - The script never places the password on a command line; pg_dump receives it
+#     through PGPASSWORD in the container environment.
 #
 # REQUIRED REPOSITORY VARIABLES (Settings -> Secrets and variables -> Actions ->
 # Variables; none of these is confidential):
-#   AWS_REGION               Every aws call and the OIDC session region.
-#   AWS_BACKUP_ROLE_ARN      OIDC role this workflow assumes. It needs, scoped to
-#                            the backup bucket, s3:PutObject, s3:GetObject,
-#                            s3:ListBucket, s3:DeleteObject (and s3:AbortMultipart
-#                            Upload), plus secretsmanager:GetSecretValue on the
-#                            DATABASE_URL secret below.
-#   BACKUP_S3_BUCKET         Destination bucket (create a dedicated, versioned,
-#                            encrypted, non-public bucket; do NOT reuse the media
-#                            bucket).
-#   BACKUP_S3_PREFIX         Optional key prefix; defaults to database-backups/.
-#   BACKUP_RETENTION_DAYS    Optional; defaults to 30.
-#   DATABASE_URL_SECRET_ID   Secrets Manager name/ARN of the connection string.
-#                            Defaults to vedhicfoods/backend/DATABASE_URL, the
-#                            secret create-secrets.ps1 already creates.
+#   AWS_REGION                 Every aws call and the OIDC session region.
+#   AWS_BACKUP_ROLE_ARN        OIDC role this workflow assumes. It needs:
+#                                ecr:GetAuthorizationToken and
+#                                ecr:BatchCheckLayerAvailability, ecr:InitiateLayer
+#                                Upload, ecr:UploadLayerPart, ecr:CompleteLayerUpload,
+#                                ecr:PutImage on ECR_REPOSITORY;
+#                                ecs:RunTask, ecs:DescribeTasks and
+#                                ecs:DescribeTaskDefinition on ECS_BACKUP_TASK_DEFINITION;
+#                                iam:PassRole for the task's execution and task roles.
+#                              (It no longer needs secretsmanager:GetSecretValue - the
+#                              credential is injected by the task definition.)
+#   ECR_REGISTRY               E.g. <account>.dkr.ecr.<region>.amazonaws.com.
+#   ECR_REPOSITORY            ECR repo the backup image is pushed to. A distinct
+#                              `backup-<sha>` tag is used, so the service's tags are
+#                              untouched.
+#   ECS_CLUSTER_NAME           Cluster the one-off backup task runs in.
+#   ECS_BACKUP_TASK_DEFINITION Backup task definition family. Must reference the
+#                              private subnets' VPC, inject DATABASE_URL from
+#                              Secrets Manager, and use a task role scoped to the
+#                              backup bucket (s3:PutObject, GetObject, ListBucket,
+#                              DeleteObject, AbortMultipartUpload).
+#   PRIVATE_SUBNET_IDS         Comma-separated private subnet ids (awsvpc config).
+#   TASK_SECURITY_GROUP_ID     Security group with egress to the database and S3.
+#   BACKUP_S3_BUCKET           Destination bucket (dedicated, versioned, encrypted,
+#                              non-public; do NOT reuse the media bucket).
+#   BACKUP_S3_PREFIX           Optional key prefix; defaults to database-backups/.
+#   BACKUP_RETENTION_DAYS      Optional; defaults to 30.
 #
 # SECRETS: none are required in GitHub. The database URL stays in AWS Secrets
 #   Manager.
 #
 # IAM TRUST: add a trust policy for this workflow's ref to the backup role (the
 #   scheduled run uses the default branch). The deploy role's example trust in
-#   backend/infra/README.md is the template; scope `sub` to this repository and,
-#   rather than pinning only refs/heads/main, allow the branch the schedule runs
-#   on. Do not widen it to any repository.
+#   backend/infra/README.md is the template; scope `sub` to this repository and to
+#   the branch the schedule runs on. Do not widen it to any repository.
 # =============================================================================
 
 name: Database Backup
@@ -77,54 +99,47 @@ permissions:
   id-token: write
 
 env:
-  NODE_VERSION: '22'
   AWS_REGION: ${{ vars.AWS_REGION }}
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER_NAME }}
+  ECS_TASK_DEFINITION: ${{ vars.ECS_BACKUP_TASK_DEFINITION }}
+  SUBNETS: ${{ vars.PRIVATE_SUBNET_IDS }}
+  SECURITY_GROUPS: ${{ vars.TASK_SECURITY_GROUP_ID }}
+  ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
   BACKUP_S3_BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
   BACKUP_S3_PREFIX: ${{ vars.BACKUP_S3_PREFIX }}
   BACKUP_RETENTION_DAYS: ${{ github.event.inputs.retention_days || vars.BACKUP_RETENTION_DAYS || '30' }}
   BACKUP_DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
-  DB_SECRET_ID: ${{ vars.DATABASE_URL_SECRET_ID || 'vedhicfoods/backend/DATABASE_URL' }}
 
 jobs:
   backup:
-    name: pg_dump -> S3
+    name: pg_dump (in-VPC) -> S3
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
       - name: Assert configuration is present
-        # Fail early with a named variable, rather than inside the script with a
+        # Fail early with a named variable, rather than inside the task with a
         # generic AWS authorization error that reads like a permissions problem.
         run: |
           set -euo pipefail
           missing=()
-          [ -n "$AWS_REGION" ]    || missing+=("vars.AWS_REGION")
-          [ -n "$BACKUP_ROLE_ARN" ] || missing+=("vars.AWS_BACKUP_ROLE_ARN")
-          [ -n "$BACKUP_S3_BUCKET" ] || missing+=("vars.BACKUP_S3_BUCKET")
-          [ -n "$DB_SECRET_ID" ]  || missing+=("vars.DATABASE_URL_SECRET_ID")
+          [ -n "$AWS_REGION" ]          || missing+=("vars.AWS_REGION")
+          [ -n "$BACKUP_ROLE_ARN" ]     || missing+=("vars.AWS_BACKUP_ROLE_ARN")
+          [ -n "$ECR_REGISTRY" ]        || missing+=("vars.ECR_REGISTRY")
+          [ -n "$ECR_REPOSITORY" ]      || missing+=("vars.ECR_REPOSITORY")
+          [ -n "$ECS_CLUSTER" ]         || missing+=("vars.ECS_CLUSTER_NAME")
+          [ -n "$ECS_TASK_DEFINITION" ] || missing+=("vars.ECS_BACKUP_TASK_DEFINITION")
+          [ -n "$SUBNETS" ]             || missing+=("vars.PRIVATE_SUBNET_IDS")
+          [ -n "$SECURITY_GROUPS" ]     || missing+=("vars.TASK_SECURITY_GROUP_ID")
+          [ -n "$BACKUP_S3_BUCKET" ]    || missing+=("vars.BACKUP_S3_BUCKET")
           if [ ${#missing[@]} -ne 0 ]; then
             echo "::error::Missing required repository variables: ${missing[*]}"
             exit 1
           fi
         env:
           BACKUP_ROLE_ARN: ${{ vars.AWS_BACKUP_ROLE_ARN }}
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      # ubuntu-latest ships a PostgreSQL client, but pin the fallback so a runner
-      # image change does not leave pg_dump absent. The client major version must
-      # be >= the server's; check with `pg_dump --version` in the log.
-      - name: Ensure PostgreSQL client
-        run: |
-          set -euo pipefail
-          if ! command -v pg_dump >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y --no-install-recommends postgresql-client
-          fi
-          pg_dump --version
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -133,29 +148,101 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: gha-db-backup-${{ github.run_id }}
 
-      - name: Fetch DATABASE_URL from Secrets Manager
-        # The credential is never stored in GitHub. `::add-mask::` registers it
-        # with the log filter, and the heredoc keeps any special characters out
-        # of the GITHUB_ENV parser.
+      - name: Login to ECR
         run: |
           set -euo pipefail
-          url=$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ID" \
-            --query SecretString --output text)
-          if [ -z "$url" ] || [ "$url" = "None" ]; then
-            echo "::error::Secret $DB_SECRET_ID returned no value."
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+      - uses: docker/setup-buildx-action@v3
+
+      # The image carries pg_dump, the AWS CLI and the script. It is rebuilt on
+      # every run (a stale backup image would silently run an old retention policy)
+      # and tagged by commit so a run is traceable to the script it executed.
+      - name: Build and push backup image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./database/backup.Dockerfile
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:backup-${{ github.sha }}
+          cache-from: type=gha
+
+      - name: Run backup as an ECS one-off task
+        # Everything happens inside the VPC: the task pulls no external credential
+        # (DATABASE_URL is injected by the task definition from Secrets Manager) and
+        # reaches the private database over the service's own network path.
+        run: |
+          set -euo pipefail
+          IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:backup-${GITHUB_SHA}"
+          echo "Backup image: ${IMAGE}"
+
+          # Resolve the container name from the task definition rather than assuming.
+          CONTAINER=$(aws ecs describe-task-definition \
+            --task-definition "$ECS_TASK_DEFINITION" \
+            --query 'taskDefinition.containerDefinitions[0].name' --output text --region "$AWS_REGION")
+          if [ -z "$CONTAINER" ] || [ "$CONTAINER" = "None" ]; then
+            echo "::error::Could not resolve the backup task's container name from $ECS_TASK_DEFINITION"
             exit 1
           fi
-          echo "::add-mask::$url"
-          {
-            echo "DATABASE_URL<<VF_BACKUP_EOF"
-            echo "$url"
-            echo "VF_BACKUP_EOF"
-          } >> "$GITHUB_ENV"
 
-      - name: Run backup
-        # BACKUP_S3_BUCKET/PREFIX/RETENTION_DAYS/DRY_RUN come from the workflow
-        # env; DATABASE_URL was written to GITHUB_ENV by the previous step.
-        run: node database/scripts/backup-to-s3.mjs
+          # `environment` overrides supply the backup knobs; DATABASE_URL is a
+          # `secrets` entry and is deliberately NOT touched here. An empty
+          # BACKUP_S3_PREFIX is passed through, and the script falls back to its
+          # documented default.
+          OVERRIDES=$(jq -n \
+            --arg name "$CONTAINER" \
+            --arg image "$IMAGE" \
+            --arg bucket "$BACKUP_S3_BUCKET" \
+            --arg prefix "$BACKUP_S3_PREFIX" \
+            --arg retention "$BACKUP_RETENTION_DAYS" \
+            --arg dryRun "$BACKUP_DRY_RUN" \
+            --arg region "$AWS_REGION" \
+            '{containerOverrides: [{
+                name: $name,
+                image: $image,
+                command: ["node", "database/scripts/backup-to-s3.mjs"],
+                environment: [
+                  {name: "BACKUP_S3_BUCKET", value: $bucket},
+                  {name: "BACKUP_S3_PREFIX", value: $prefix},
+                  {name: "BACKUP_RETENTION_DAYS", value: $retention},
+                  {name: "BACKUP_DRY_RUN", value: $dryRun},
+                  {name: "AWS_REGION", value: $region}
+                ]
+              }]}')
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$ECS_TASK_DEFINITION" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SECURITY_GROUPS]}" \
+            --overrides "$OVERRIDES" \
+            --started-by "gha-db-backup-${GITHUB_RUN_ID}" \
+            --query 'tasks[0].taskArn' --output text --region "$AWS_REGION")
+
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
+            echo "::error::ECS placed no backup task."
+            exit 1
+          fi
+          echo "Backup task: $TASK_ARN"
+
+          # `run-task` returns as soon as the task is placed, which proves nothing
+          # about whether the dump succeeded. Wait for it to stop and inspect the
+          # container exit code - a green workflow on a failed dump is the one
+          # outcome that must never happen.
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" --region "$AWS_REGION"
+
+          EXIT_CODE=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[?name=='$CONTAINER'].exitCode | [0]" --output text --region "$AWS_REGION")
+          REASON=$(aws ecs describe-tasks --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' --output text --region "$AWS_REGION")
+
+          echo "Backup task stopped: exit=$EXIT_CODE reason=$REASON"
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::Backup failed (exit $EXIT_CODE, reason: $REASON). No archive was verified."
+            exit 1
+          fi
+          echo "Backup completed successfully. See the ${ECS_TASK_DEFINITION} logs in CloudWatch for the object key."
 
       - name: Summarise
         if: always()
@@ -166,6 +253,7 @@ jobs:
             echo "- Target: \`s3://${BACKUP_S3_BUCKET}/${BACKUP_S3_PREFIX:-database-backups/}\`"
             echo "- Retention: ${BACKUP_RETENTION_DAYS} day(s)"
             echo "- Dry run: ${BACKUP_DRY_RUN}"
+            echo "- Ran as: \`${ECS_TASK_DEFINITION}\` in \`${ECS_CLUSTER}\` (in-VPC)"
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           JOB_STATUS: ${{ job.status }}

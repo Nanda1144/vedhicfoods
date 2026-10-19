@@ -751,10 +751,16 @@ export class InventoryService {
         const lockedRows: any[] = await tx.$queryRaw`SELECT id, "availableQuantity", "reservedQuantity", "soldQuantity" FROM inventories WHERE id = ${inventory.id} FOR UPDATE`
         const prevReserved = lockedRows.length > 0 ? Number(lockedRows[0].reservedQuantity) : inventory.reservedQuantity
         const prevSold = lockedRows.length > 0 ? Number(lockedRows[0].soldQuantity) : inventory.soldQuantity
+        // Only the quantity actually taken out of the reservation may become
+        // sold. Previously `newSold = prevSold + qty` incremented sold by the
+        // full requested quantity even when the reservation was already drained,
+        // so a second call (e.g. webhook racing client-side verification)
+        // double-counted soldQuantity. `deductQty` is 0 once reserved hits 0,
+        // which makes this primitive idempotent.
         const deductQty = Math.min(prevReserved, qty)
 
         const newReserved = Math.max(0, prevReserved - deductQty)
-        const newSold = prevSold + qty
+        const newSold = prevSold + deductQty
 
         await tx.inventory.update({
           where: { id: inventory.id },
@@ -780,12 +786,12 @@ export class InventoryService {
             orderId: context?.orderId || null,
             metadata: {
               orderNumber: context?.orderNumber,
-              soldIncrement: qty,
+              soldIncrement: deductQty,
             },
           },
         })
 
-        deductedDetails.push({ productId: product.id, quantity: qty })
+        deductedDetails.push({ productId: product.id, quantity: deductQty })
       }
 
       return { success: true, deductedItems: deductedDetails }

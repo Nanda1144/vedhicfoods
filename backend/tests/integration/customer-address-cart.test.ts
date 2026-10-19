@@ -364,11 +364,11 @@ describe('Customer Address & Authoritative Cart Integration Tests', () => {
         .set('Authorization', `Bearer ${customerAToken}`)
 
       expect(res.status).toBe(200)
-      expect(res.body.itemCount).toBe(0)
-      expect(res.body.subtotal).toBe(0)
-      expect(res.body.shipping).toBe(0)
-      expect(res.body.tax).toBe(0)
-      expect(res.body.total).toBe(0)
+      expect(res.body.data.itemCount).toBe(0)
+      expect(res.body.data.subtotal).toBe(0)
+      expect(res.body.data.shipping).toBe(0)
+      expect(res.body.data.tax).toBe(0)
+      expect(res.body.data.total).toBe(0)
     })
 
     it('POST /api/v1/cart/items should reject non-existent product with 404', async () => {
@@ -490,7 +490,7 @@ describe('Customer Address & Authoritative Cart Integration Tests', () => {
         .get('/api/v1/cart')
         .set('Authorization', `Bearer ${customerAToken}`)
 
-      const gheeItem = getCartRes.body.items.find((i: any) => i.productId === activeProductId)
+      const gheeItem = getCartRes.body.data.items.find((i: any) => i.productId === activeProductId)
       expect(gheeItem).toBeDefined()
 
       // Update quantity from 2 to 3
@@ -510,7 +510,7 @@ describe('Customer Address & Authoritative Cart Integration Tests', () => {
         .get('/api/v1/cart')
         .set('Authorization', `Bearer ${customerAToken}`)
 
-      const saffronItem = getCartRes.body.items.find((i: any) => i.productId === highPricedProductId)
+      const saffronItem = getCartRes.body.data.items.find((i: any) => i.productId === highPricedProductId)
 
       const delRes = await request(app)
         .delete(`/api/v1/cart/items/${saffronItem.id}`)
@@ -528,7 +528,7 @@ describe('Customer Address & Authoritative Cart Integration Tests', () => {
         .get('/api/v1/cart')
         .set('Authorization', `Bearer ${customerAToken}`)
 
-      const itemA = getCartA.body.items[0]
+      const itemA = getCartA.body.data.items[0]
       expect(itemA).toBeDefined()
 
       // Customer B attempts to modify Customer A's line item
@@ -587,9 +587,9 @@ describe('Customer Address & Authoritative Cart Integration Tests', () => {
 
       expect(cartB.status).toBe(200)
       // Exactly 1 line item for highPricedProductId with accumulated quantity of 3
-      expect(cartB.body.items.length).toBe(1)
-      expect(cartB.body.items[0].productId).toBe(highPricedProductId)
-      expect(cartB.body.items[0].quantity).toBe(3)
+      expect(cartB.body.data.items.length).toBe(1)
+      expect(cartB.body.data.items[0].productId).toBe(highPricedProductId)
+      expect(cartB.body.data.items[0].quantity).toBe(3)
     })
 
     it('Guest cart session should merge into customer account cart on login / merge', async () => {

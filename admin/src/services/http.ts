@@ -314,6 +314,55 @@ async function ensureFreshAdminToken(): Promise<void> {
 }
 
 /**
+ * Coalesces concurrent identical GET requests into one network round trip.
+ *
+ * Two things this addresses: React StrictMode's mount -> unmount -> mount double
+ * invokes every `useAsync` effect in development, and two mounted components
+ * that read the same resource otherwise issue two identical requests. Only
+ * signal-free, non-retried, non-auth GETs are coalesced, so a caller's
+ * cancellation still aborts its own request and a 401 retry is never served
+ * from a pre-refresh response. It shares the in-flight promise, not a cached
+ * value, so it can never return stale data.
+ */
+const inflightGets = new Map<string, Promise<unknown>>()
+
+export function apiFetchRaw<T>(
+  endpoint: string,
+  init?: RequestInit,
+  options?: RequestOptions,
+): Promise<T> {
+  const method = (init?.method ?? 'GET').toUpperCase()
+  if (
+    method !== 'GET' ||
+    options?.signal ||
+    options?.__retried ||
+    isAuthLifecycleEndpoint(endpoint)
+  ) {
+    return apiFetchRawUncoalesced<T>(endpoint, init, options)
+  }
+
+  const url = endpoint.startsWith('http')
+    ? endpoint
+    : `${API_BASE_URL}${endpoint.startsWith('/') ? '' : '/'}${endpoint}`
+  const key = `${url}\u0000${getAuthToken() ?? ''}`
+
+  const existing = inflightGets.get(key)
+  if (existing) return existing as Promise<T>
+
+  const request = apiFetchRawUncoalesced<T>(endpoint, init, options)
+  inflightGets.set(key, request)
+  void request
+    .finally(() => {
+      inflightGets.delete(key)
+    })
+    .catch(() => {
+      // Swallow here only: the awaiting caller observes the rejection. This side
+      // exists purely to release the map entry and must not raise its own.
+    })
+  return request
+}
+
+/**
  * Real HTTP client for the Node.js/TypeScript backend.
  *
  * Returns the response body exactly as the server sent it — no envelope
@@ -323,7 +372,7 @@ async function ensureFreshAdminToken(): Promise<void> {
  * Every request is bounded by an abort deadline and is composed with any
  * caller-supplied `signal`, so no request can hang a screen forever.
  */
-export async function apiFetchRaw<T>(
+async function apiFetchRawUncoalesced<T>(
   endpoint: string,
   init?: RequestInit,
   options?: RequestOptions,

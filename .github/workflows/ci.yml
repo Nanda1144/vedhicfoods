@@ -90,6 +90,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=public
+      # `config/env.ts` requires JWT_SECRET (min 32 chars) at import time for every
+      # environment, not just production. No `.env.test` exists on a clean runner,
+      # so without this every unit suite dies at import with
+      # "JWT_SECRET: Required" and `process.exit(1)`. CI-only throwaway, not a
+      # production secret.
+      JWT_SECRET: ci_only_jwt_secret_change_me_min_32_chars
     steps:
       - uses: actions/checkout@v4
 
@@ -171,6 +177,10 @@ jobs:
       DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/vedhicfoods_test?schema=public
       TEST_DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/vedhicfoods_test?schema=public
       NODE_ENV: test
+      # Required at import time by `config/env.ts` (see the `verify` job). Without
+      # it every integration suite aborts with "JWT_SECRET: Required" before it can
+      # connect to the service container. CI-only throwaway, not a production secret.
+      JWT_SECRET: ci_only_jwt_secret_change_me_min_32_chars
       # `database/seed.ts` only creates the operator accounts when these are set,
       # and ~15 integration suites authenticate as the seeded admin/staff
       # (`admin@vedhicfoods.com` / `Admin@Vedhic2026`). Without them the seed
@@ -205,6 +215,14 @@ jobs:
 
       - name: Generate Prisma client
         run: npm run prisma:generate
+
+      # The backend imports the `vedhicfoods-database` workspace (`import { db }
+      # from 'vedhicfoods-database'`), whose entrypoint is `dist/index.js`. Root
+      # `npm ci` links the workspace but does NOT compile it, so without this step
+      # every suite that touches the database dies at import with
+      # "Failed to resolve entry for package \"vedhicfoods-database\"".
+      - name: Build database workspace
+        run: npm run build:database
 
       # Apply the migration history to an empty database first. `migrate deploy`
       # rather than `migrate dev`: CI must never be allowed to invent a migration.

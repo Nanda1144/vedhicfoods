@@ -1,0 +1,91 @@
+# =============================================================================
+# Render Blueprint - Vedhic Foods API + Postgres + Key Value (Redis)
+#
+# OPTIONAL. The dashboard steps in the deployment guide work without this file.
+# To use it: Render Dashboard -> New -> Blueprint -> point at this repo. Render
+# reads this file from the repository root.
+#
+# READ BEFORE SYNCING
+#   - rootDir MUST stay the repo root (`.`). `backend` depends on the
+#     `vedhicfoods-database` npm workspace, which npm only links from the root.
+#   - `NODE_ENV=production` makes backend/src/config/env.ts refuse to boot until
+#     every value below is REAL (not a placeholder): JWT_SECRET >= 32,
+#     ENCRYPTION_KEY >= 32, RAZORPAY_WEBHOOK_SECRET >= 16, both *_FRONTEND_URL
+#     as https origins, TRUST_PROXY set (not false), REDIS_URL present. The
+#     `sync: false` entries are prompted for on first sync - paste real values.
+#   - Health check is the LIVENESS probe (/api/v1/health), not /health/ready:
+#     a transient DB blip must not make Render restart-loop a healthy instance.
+#   - Plans below are the cheapest, for a first/test deploy. For production:
+#       web       -> 0.5c-512mb  (free spins down after inactivity)
+#       database  -> 0.5c-1g     (free Postgres EXPIRES after 90 days)
+#       keyvalue  -> 256mb       (free is 25 MB)
+#   - `preDeployCommand` (the migration) needs a paid instance. On a free plan
+#     Render skips it, so run migrations manually (see the guide, step 6).
+# =============================================================================
+
+databases:
+  - name: vedhicfoods-db
+    databaseName: vedhicfoods
+    user: vedhicfoods
+    plan: free
+    region: singapore
+    postgresMajorVersion: "16"
+
+services:
+  - type: keyvalue
+    name: vedhicfoods-redis
+    plan: free
+    region: singapore
+    ipAllowList: [] # internal connections only
+
+  - type: web
+    name: vedhicfoods-api
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: .
+    buildCommand: npm ci --include=dev && npm run build:database && npm run build:backend
+    startCommand: node backend/dist/bootstrap.js
+    healthCheckPath: /api/v1/health
+    preDeployCommand: npm run prisma:deploy
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vedhicfoods-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: vedhicfoods-redis
+          property: connectionString
+      - key: TRUST_PROXY
+        value: "1"
+      # 256-bit base64, generated once by Render. Never placed in git.
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      # Prompted on first sync. Fill with real values; a placeholder fails boot.
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: ADMIN_FRONTEND_URL
+        sync: false
+      - key: EMAIL_PROVIDER
+        value: brevo
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      - key: LOG_LEVEL
+        value: info
